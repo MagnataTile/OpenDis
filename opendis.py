@@ -665,7 +665,416 @@ def get_credentials_file(profile_path):
 
     return None
 
+# ============================================================
+# CREDENCIAIS SALVAS
+# ============================================================
 
+import base64
+import hashlib
+import ctypes
+from ctypes import wintypes
+
+
+CREDENTIALS_DIR = (
+    Path(os.environ.get("APPDATA", str(BASE_DIR)))
+    / APP_NAME
+)
+
+CREDENTIALS_FILE = (
+    CREDENTIALS_DIR
+    / "credentials.dat"
+)
+
+
+def _dpapi_protect(data):
+    """
+    Criptografa dados usando Windows DPAPI.
+
+    A informação fica vinculada ao usuário atual
+    do Windows.
+    """
+
+    if os.name != "nt":
+        raise RuntimeError(
+            "Windows DPAPI está disponível somente no Windows."
+        )
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_byte)),
+        ]
+
+    raw = bytes(data)
+
+    buffer = ctypes.create_string_buffer(raw)
+
+    blob_in = DATA_BLOB(
+        len(raw),
+        ctypes.cast(
+            buffer,
+            ctypes.POINTER(ctypes.c_byte)
+        )
+    )
+
+    blob_out = DATA_BLOB()
+
+    crypt32 = ctypes.windll.crypt32
+
+    result = crypt32.CryptProtectData(
+        ctypes.byref(blob_in),
+        None,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(blob_out)
+    )
+
+    if not result:
+        raise ctypes.WinError()
+
+    try:
+
+        encrypted = ctypes.string_at(
+            blob_out.pbData,
+            blob_out.cbData
+        )
+
+    finally:
+
+        ctypes.windll.kernel32.LocalFree(
+            blob_out.pbData
+        )
+
+    return encrypted
+
+
+def _dpapi_unprotect(data):
+    """
+    Descriptografa dados protegidos pelo Windows DPAPI.
+    """
+
+    if os.name != "nt":
+        raise RuntimeError(
+            "Windows DPAPI está disponível somente no Windows."
+        )
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_byte)),
+        ]
+
+    raw = bytes(data)
+
+    buffer = ctypes.create_string_buffer(raw)
+
+    blob_in = DATA_BLOB(
+        len(raw),
+        ctypes.cast(
+            buffer,
+            ctypes.POINTER(ctypes.c_byte)
+        )
+    )
+
+    blob_out = DATA_BLOB()
+
+    crypt32 = ctypes.windll.crypt32
+
+    result = crypt32.CryptUnprotectData(
+        ctypes.byref(blob_in),
+        None,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(blob_out)
+    )
+
+    if not result:
+        raise ctypes.WinError()
+
+    try:
+
+        decrypted = ctypes.string_at(
+            blob_out.pbData,
+            blob_out.cbData
+        )
+
+    finally:
+
+        ctypes.windll.kernel32.LocalFree(
+            blob_out.pbData
+        )
+
+    return decrypted
+
+
+def _credential_profile_key(profile_path):
+    """
+    Cria uma identificação estável para o perfil .ovpn.
+
+    Usa o conteúdo do arquivo em vez do caminho físico.
+    Assim, se o OpenDis for movido de pasta, a credencial
+    continua associada ao mesmo perfil.
+    """
+
+    try:
+
+        profile_path = Path(profile_path)
+
+        content = profile_path.read_bytes()
+
+        return hashlib.sha256(
+            content
+        ).hexdigest()
+
+    except Exception:
+
+        return hashlib.sha256(
+            str(profile_path).encode(
+                "utf-8",
+                errors="ignore"
+            )
+        ).hexdigest()
+
+
+def load_saved_credentials(profile_path):
+    """
+    Retorna:
+
+        {
+            "username": "...",
+            "password": "..."
+        }
+
+    ou None caso não exista.
+    """
+
+    try:
+
+        if not CREDENTIALS_FILE.exists():
+            return None
+
+        encrypted = CREDENTIALS_FILE.read_bytes()
+
+        if not encrypted:
+            return None
+
+        decrypted = _dpapi_unprotect(
+            encrypted
+        )
+
+        database = json.loads(
+            decrypted.decode("utf-8")
+        )
+
+        key = _credential_profile_key(
+            profile_path
+        )
+
+        credentials = database.get(key)
+
+        if not isinstance(
+            credentials,
+            dict
+        ):
+            return None
+
+        username = credentials.get(
+            "username",
+            ""
+        )
+
+        password = credentials.get(
+            "password",
+            ""
+        )
+
+        if not username or not password:
+            return None
+
+        return {
+            "username": username,
+            "password": password
+        }
+
+    except Exception:
+
+        return None
+
+
+def save_credentials(
+    profile_path,
+    username,
+    password
+):
+    """
+    Salva as credenciais do perfil usando DPAPI.
+    """
+
+    try:
+
+        CREDENTIALS_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        database = {}
+
+        # --------------------------------------------------------
+        # Recuperar banco existente
+        # --------------------------------------------------------
+
+        if CREDENTIALS_FILE.exists():
+
+            try:
+
+                encrypted = (
+                    CREDENTIALS_FILE.read_bytes()
+                )
+
+                if encrypted:
+
+                    decrypted = _dpapi_unprotect(
+                        encrypted
+                    )
+
+                    database = json.loads(
+                        decrypted.decode("utf-8")
+                    )
+
+                    if not isinstance(
+                        database,
+                        dict
+                    ):
+                        database = {}
+
+            except Exception:
+
+                database = {}
+
+        # --------------------------------------------------------
+        # Salvar credencial
+        # --------------------------------------------------------
+
+        key = _credential_profile_key(
+            profile_path
+        )
+
+        database[key] = {
+            "username": str(username),
+            "password": str(password)
+        }
+
+        raw = json.dumps(
+            database,
+            ensure_ascii=False
+        ).encode("utf-8")
+
+        encrypted = _dpapi_protect(
+            raw
+        )
+
+        # --------------------------------------------------------
+        # Escrita atômica
+        # --------------------------------------------------------
+
+        temporary_file = (
+            CREDENTIALS_FILE.with_suffix(
+                ".tmp"
+            )
+        )
+
+        temporary_file.write_bytes(
+            encrypted
+        )
+
+        temporary_file.replace(
+            CREDENTIALS_FILE
+        )
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+def delete_saved_credentials(profile_path):
+    """
+    Remove as credenciais salvas somente do perfil informado.
+    """
+
+    try:
+
+        if not CREDENTIALS_FILE.exists():
+            return True
+
+        encrypted = CREDENTIALS_FILE.read_bytes()
+
+        if not encrypted:
+            return True
+
+        decrypted = _dpapi_unprotect(
+            encrypted
+        )
+
+        database = json.loads(
+            decrypted.decode("utf-8")
+        )
+
+        if not isinstance(
+            database,
+            dict
+        ):
+            return True
+
+        key = _credential_profile_key(
+            profile_path
+        )
+
+        if key in database:
+
+            del database[key]
+
+            if database:
+
+                raw = json.dumps(
+                    database,
+                    ensure_ascii=False
+                ).encode("utf-8")
+
+                encrypted = _dpapi_protect(
+                    raw
+                )
+
+                temporary_file = (
+                    CREDENTIALS_FILE.with_suffix(
+                        ".tmp"
+                    )
+                )
+
+                temporary_file.write_bytes(
+                    encrypted
+                )
+
+                temporary_file.replace(
+                    CREDENTIALS_FILE
+                )
+
+            else:
+
+                CREDENTIALS_FILE.unlink(
+                    missing_ok=True
+                )
+
+        return True
+
+    except Exception:
+
+        return False
 # ============================================================
 # IP PÚBLICO
 # ============================================================
@@ -1592,7 +2001,6 @@ class OpenDisApp(ctk.CTk):
 
             self.show_connect_screen()
 
-
     def show_credentials_screen(self):
 
         self.clear()
@@ -1606,7 +2014,7 @@ class OpenDisApp(ctk.CTk):
             ),
             text_color="#cccccc"
         ).pack(
-            pady=(55, 10)
+            pady=(45, 10)
         )
 
         ctk.CTkLabel(
@@ -1624,6 +2032,10 @@ class OpenDisApp(ctk.CTk):
             pady=10
         )
 
+        # ========================================================
+        # USUÁRIO
+        # ========================================================
+
         ctk.CTkLabel(
             self.container,
             text="Usuário",
@@ -1632,7 +2044,7 @@ class OpenDisApp(ctk.CTk):
             ),
             text_color="#cccccc"
         ).pack(
-            pady=(10, 3)
+            pady=(8, 3)
         )
 
         self.username_entry = ctk.CTkEntry(
@@ -1646,6 +2058,10 @@ class OpenDisApp(ctk.CTk):
             pady=5
         )
 
+        # ========================================================
+        # SENHA
+        # ========================================================
+
         ctk.CTkLabel(
             self.container,
             text="Senha",
@@ -1654,7 +2070,7 @@ class OpenDisApp(ctk.CTk):
             ),
             text_color="#cccccc"
         ).pack(
-            pady=(10, 3)
+            pady=(8, 3)
         )
 
         self.password_entry = ctk.CTkEntry(
@@ -1665,10 +2081,95 @@ class OpenDisApp(ctk.CTk):
             placeholder_text="Senha OpenVPN"
         )
 
-
         self.password_entry.pack(
             pady=5
         )
+
+        # ========================================================
+        # LEMBRAR CREDENCIAIS
+        # ========================================================
+
+        self.remember_credentials_var = ctk.BooleanVar(
+            value=False
+        )
+
+        self.remember_credentials_checkbox = ctk.CTkCheckBox(
+            self.container,
+            text="Lembrar credenciais",
+            variable=self.remember_credentials_var,
+            font=ctk.CTkFont(
+                size=12
+            ),
+            text_color="#cccccc",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            border_color="#666675",
+            border_width=2
+        )
+
+        self.remember_credentials_checkbox.pack(
+            pady=(10, 5)
+        )
+
+        ctk.CTkLabel(
+            self.container,
+            text="🔒 As credenciais são protegidas pelo Windows.",
+            font=ctk.CTkFont(
+                size=10
+            ),
+            text_color="#666675"
+        ).pack(
+            pady=(0, 8)
+        )
+
+        # ========================================================
+        # CARREGAR CREDENCIAL SALVA
+        # ========================================================
+
+        saved_credentials = None
+
+        try:
+
+            if self.current_profile:
+                saved_credentials = load_saved_credentials(
+                    self.current_profile
+                )
+
+        except Exception:
+
+            saved_credentials = None
+
+        if saved_credentials:
+
+            username = saved_credentials.get(
+                "username",
+                ""
+            )
+
+            password = saved_credentials.get(
+                "password",
+                ""
+            )
+
+            if username:
+                self.username_entry.insert(
+                    0,
+                    username
+                )
+
+            if password:
+                self.password_entry.insert(
+                    0,
+                    password
+                )
+
+            self.remember_credentials_var.set(
+                True
+            )
+
+        # ========================================================
+        # CONTINUAR
+        # ========================================================
 
         ctk.CTkButton(
             self.container,
@@ -1683,9 +2184,8 @@ class OpenDisApp(ctk.CTk):
             ),
             corner_radius=25
         ).pack(
-            pady=25
+            pady=20
         )
-
 
     def credentials_submitted(self):
 
@@ -1693,8 +2193,11 @@ class OpenDisApp(ctk.CTk):
 
         password = self.password_entry.get()
 
-        if not username or not password:
+        # ========================================================
+        # VALIDAR
+        # ========================================================
 
+        if not username or not password:
             mb.showwarning(
                 "Credenciais",
                 "Informe usuário e senha."
@@ -1702,8 +2205,74 @@ class OpenDisApp(ctk.CTk):
 
             return
 
+        # ========================================================
+        # GUARDAR NA MEMÓRIA DA SESSÃO
+        # ========================================================
+
         self.ovpn_username = username
         self.ovpn_password = password
+
+        # ========================================================
+        # LEMBRAR CREDENCIAIS
+        # ========================================================
+
+        remember = False
+
+        try:
+
+            remember = bool(
+                self.remember_credentials_var.get()
+            )
+
+        except Exception:
+
+            remember = False
+
+        # ========================================================
+        # SALVAR
+        # ========================================================
+
+        if remember:
+
+            if not self.current_profile:
+                mb.showerror(
+                    "Credenciais",
+                    "Nenhum perfil .ovpn foi selecionado."
+                )
+
+                return
+
+            saved = save_credentials(
+                self.current_profile,
+                username,
+                password
+            )
+
+            if not saved:
+                mb.showwarning(
+                    "Credenciais",
+                    (
+                        "Não foi possível salvar as credenciais.\n\n"
+                        "Você poderá continuar normalmente, "
+                        "mas será necessário digitá-las novamente "
+                        "na próxima execução."
+                    )
+                )
+
+        # ========================================================
+        # NÃO LEMBRAR
+        # ========================================================
+
+        else:
+
+            if self.current_profile:
+                delete_saved_credentials(
+                    self.current_profile
+                )
+
+        # ========================================================
+        # CONTINUAR
+        # ========================================================
 
         self.show_connect_screen()
 
