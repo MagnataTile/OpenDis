@@ -56,6 +56,7 @@ import socket
 import threading
 import subprocess
 import webbrowser
+import random
 from pathlib import Path
 from urllib.request import (
     urlopen,
@@ -130,21 +131,31 @@ VPNBOOK_API_URL = (
 # PADRÃO DO BOTÃO "VPN ALEATÓRIA"
 # ------------------------------------------------------------
 
-VPNBOOK_DEFAULT_SERVER = (
-    "us16.vpnbook.com"
-)
+VPNBOOK_SERVERS = [
+    {
+        "server": "us16.vpnbook.com",
+        "name": "US Server 1",
+        "protocol": "tcp443",
+    },
+    {
+        "server": "us17.vpnbook.com",
+        "name": "US Server 2",
+        "protocol": "tcp443",
+    },
+    {
+        "server": "ca196.vpnbook.com",
+        "name": "Canada Server",
+        "protocol": "tcp443",
+    },
+]
 
-VPNBOOK_DEFAULT_SERVER_NAME = (
-    "US Server 1"
-)
+VPNBOOK_SELECTED = random.choice(VPNBOOK_SERVERS)
 
-VPNBOOK_DEFAULT_PROTOCOL = (
-    "tcp443"
-)
+VPNBOOK_DEFAULT_SERVER = VPNBOOK_SELECTED["server"]
+VPNBOOK_DEFAULT_SERVER_NAME = VPNBOOK_SELECTED["name"]
+VPNBOOK_DEFAULT_PROTOCOL = VPNBOOK_SELECTED["protocol"]
 
-VPNBOOK_DIR = (
-    VPN_DIR / "VPNBook"
-)
+VPNBOOK_DIR = VPN_DIR / "VPNBook"
 
 VPNBOOK_DIR.mkdir(
     parents=True,
