@@ -1588,6 +1588,7 @@ class OpenDisApp(ctk.CTk):
             placeholder_text="Senha OpenVPN"
         )
 
+
         self.password_entry.pack(
             pady=5
         )
