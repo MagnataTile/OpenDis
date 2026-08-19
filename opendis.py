@@ -76,7 +76,7 @@ from tkinter import filedialog
 APP_NAME = "OpenDis"
 
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 25
+WAIT_DISCORD = 40
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
@@ -3649,8 +3649,12 @@ class OpenDisApp(ctk.CTk):
 
         # ========================================================
         # VERIFICAÇÃO DE SEGURANÇA
-        # ========================================================
-
+        #========================================================
+        # Impede voltar enquanto o processo está rodando
+        if hasattr(self, "back_btn"):
+            self.back_btn.configure(
+                state="disabled"
+            )
         if os.name == "nt" and not is_running_as_admin():
             mb.showerror(
                 "OpenDis",
