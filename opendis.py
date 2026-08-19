@@ -76,7 +76,7 @@ from tkinter import filedialog
 APP_NAME = "OpenDis"
 
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 10
+WAIT_DISCORD = 25
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
