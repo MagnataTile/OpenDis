@@ -2257,7 +2257,7 @@ class OpenDisApp(ctk.CTk):
             return
 
         self.status_label.configure(
-            text="✅ OpenVPN encontrado"
+            text="OK: OpenVPN encontrado"
         )
 
         discord = find_discord_executable()
@@ -2291,7 +2291,7 @@ class OpenDisApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.container,
-            text="📥 OpenVPN não encontrado",
+            text="FAIL: OpenVPN não encontrado",
             font=ctk.CTkFont(
                 size=22,
                 weight="bold"
@@ -2401,7 +2401,7 @@ class OpenDisApp(ctk.CTk):
         if ok:
 
             self.status_label.configure(
-                text="✅ OpenVPN instalado!"
+                text="OK: OpenVPN instalado!"
             )
 
             self.after(
@@ -2436,7 +2436,7 @@ class OpenDisApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.container,
-            text="📥 Discord não encontrado",
+            text="FAIL: Discord não encontrado",
             font=ctk.CTkFont(
                 size=22,
                 weight="bold"
@@ -2546,7 +2546,7 @@ class OpenDisApp(ctk.CTk):
         if ok:
 
             self.status_label.configure(
-                text="✅ Discord instalado!"
+                text="OK: Discord instalado!"
             )
 
             self.after(
