@@ -42,7 +42,7 @@ from tkinter import filedialog
 APP_NAME = "OpenDis"
 
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 5
+WAIT_DISCORD = 10
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
@@ -761,12 +761,16 @@ def is_running_as_admin():
 
 def restart_as_admin():
     """
-    Reinicia o próprio OpenDis como administrador.
+    Reinicia o OpenDis com privilégios administrativos.
 
-    Retorna True quando a elevação foi solicitada
-    com sucesso.
+    A elevação acontece antes da interface gráfica ser criada.
+    Assim o usuário não perde perfil, usuário, senha ou estado.
 
-    O processo atual deve ser encerrado logo depois.
+    Em modo .exe:
+        executa o próprio OpenDis.exe.
+
+    Em modo .py:
+        utiliza pythonw.exe para evitar janela CMD.
     """
 
     if os.name != "nt":
@@ -778,14 +782,50 @@ def restart_as_admin():
     try:
         import ctypes
 
+        # ========================================================
+        # MODO EXECUTÁVEL
+        # ========================================================
+
         if getattr(sys, "frozen", False):
 
             executable = sys.executable
+
             parameters = ""
+
+            # Preserva argumentos caso existam
+            if len(sys.argv) > 1:
+
+                parameters = " ".join(
+                    f'"{arg}"'
+                    for arg in sys.argv[1:]
+                )
+
+        # ========================================================
+        # MODO PYTHON
+        # ========================================================
 
         else:
 
-            executable = sys.executable
+            python_exe = sys.executable
+
+            # ----------------------------------------------------
+            # Trocar python.exe por pythonw.exe
+            # ----------------------------------------------------
+
+            if python_exe.lower().endswith(
+                "python.exe"
+            ):
+
+                pythonw = (
+                    python_exe[:-10]
+                    + "pythonw.exe"
+                )
+
+                if os.path.exists(pythonw):
+
+                    python_exe = pythonw
+
+            executable = python_exe
 
             script = os.path.abspath(
                 sys.argv[0]
@@ -795,7 +835,6 @@ def restart_as_admin():
                 f'"{script}"'
             ]
 
-            # Preserva os argumentos originais
             arguments.extend(
                 f'"{arg}"'
                 for arg in sys.argv[1:]
@@ -804,6 +843,10 @@ def restart_as_admin():
             parameters = " ".join(
                 arguments
             )
+
+        # ========================================================
+        # SOLICITAR UAC
+        # ========================================================
 
         result = ctypes.windll.shell32.ShellExecuteW(
             None,
@@ -814,8 +857,10 @@ def restart_as_admin():
             1
         )
 
-        # ShellExecute retorna > 32 quando conseguiu
-        # iniciar o processo elevado.
+        # ========================================================
+        # RESULTADO
+        # ========================================================
+
         if result > 32:
             return True
 
@@ -823,6 +868,25 @@ def restart_as_admin():
 
     except Exception:
         return False
+
+def ensure_admin():
+    """
+    Garante que o OpenDis esteja executando como administrador
+    antes de criar a interface gráfica.
+
+    Retorna:
+
+        True  -> já é administrador
+        False -> elevação falhou ou foi cancelada
+    """
+
+    if os.name != "nt":
+        return True
+
+    if is_running_as_admin():
+        return True
+
+    return restart_as_admin()
 # ============================================================
 # APP
 # ============================================================
@@ -866,6 +930,19 @@ class OpenDisApp(ctk.CTk):
         self.container.pack(
             fill="both",
             expand=True
+        )
+
+        self.footer = ctk.CTkLabel(
+            self,
+            text="powered by Magnatatile",
+            font=ctk.CTkFont(size=10),
+            text_color="#666675"
+        )
+
+        self.footer.place(
+            relx=0.5,
+            rely=0.98,
+            anchor="center"
         )
 
         self.show_splash()
@@ -1771,48 +1848,22 @@ class OpenDisApp(ctk.CTk):
         """
         Inicia a operação.
 
-        O OpenVPN precisa de privilégios administrativos para
-        manipular corretamente TAP/WFP no Windows.
+        A elevação administrativa NÃO acontece aqui.
 
-        Se o OpenDis não estiver elevado, solicita UAC e encerra
-        a instância atual. A nova instância continuará normalmente.
+        O OpenDis já deve ter sido iniciado como administrador
+        antes da interface gráfica aparecer.
         """
 
         # ========================================================
-        # VERIFICAR PRIVILÉGIOS
+        # VERIFICAÇÃO DE SEGURANÇA
         # ========================================================
 
         if os.name == "nt" and not is_running_as_admin():
-
-            try:
-
-                self.log(
-                    "🔐 Privilégios administrativos necessários."
-                )
-
-            except Exception:
-                pass
-
-            elevated = restart_as_admin()
-
-            if elevated:
-                # ------------------------------------------------
-                # A nova instância foi solicitada.
-                # ------------------------------------------------
-
-                self.after(
-                    100,
-                    self.destroy
-                )
-
-                return
-
             mb.showerror(
                 "OpenDis",
                 (
-                    "O OpenDis precisa ser executado como "
-                    "Administrador para controlar o OpenVPN.\n\n"
-                    "A elevação pelo UAC foi cancelada ou falhou."
+                    "O OpenDis não está executando como Administrador.\n\n"
+                    "Feche o programa e abra novamente."
                 )
             )
 
@@ -2728,6 +2779,37 @@ class OpenDisApp(ctk.CTk):
 # ============================================================
 
 if __name__ == "__main__":
+
+    # ========================================================
+    # GARANTIR ADMIN ANTES DA GUI
+    # ========================================================
+
+    if os.name == "nt" and not is_running_as_admin():
+
+        if not restart_as_admin():
+
+            mb.showerror(
+                "OpenDis",
+                (
+                    "O OpenDis precisa de privilégios "
+                    "administrativos para funcionar.\n\n"
+                    "A elevação foi cancelada ou falhou."
+                )
+            )
+
+            sys.exit(1)
+
+        # ----------------------------------------------------
+        # A nova instância elevada foi iniciada.
+        #
+        # Esta instância NÃO deve criar a GUI.
+        # ----------------------------------------------------
+
+        sys.exit(0)
+
+    # ========================================================
+    # JÁ ESTÁ ELEVADO
+    # ========================================================
 
     app = OpenDisApp()
 
