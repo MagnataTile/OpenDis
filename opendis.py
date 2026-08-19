@@ -1,19 +1,49 @@
 #!/usr/bin/env python3
 """
-OpenDis
+OpenDis - MagnataTile
 OpenVPN Community + Discord
 
-Fluxo:
-1. Detecta OpenVPN Community
-2. Detecta Discord
-3. Lista arquivos .ovpn em OpenDis/VPN
-4. Analisa necessidade de credenciais
-5. Conecta via openvpn.exe
-6. Confirma túnel/IP
-7. Abre Discord
-8. Aguarda Discord iniciar
-9. Desconecta OpenVPN
-10. Mostra CONCLUÍDO
+Fluxo completo:
+1. Detecta o OpenVPN Community instalado
+2. Detecta o Discord instalado
+3. Inicializa a interface do OpenDis
+4. Lista os arquivos .ovpn disponíveis em OpenDis/VPN
+5. Permite:
+   - Selecionar manualmente um arquivo .ovpn
+   - Importar/adicionar um novo .ovpn
+   - Usar VPN ALEATÓRIA
+6. Analisa o perfil .ovpn selecionado
+7. Verifica se o perfil exige credenciais
+8. Se não exigir credenciais:
+   - Avança diretamente para a tela de conexão
+9. Se exigir credenciais:
+   - Mostra tela de usuário e senha
+   - Procura credenciais salvas para aquele perfil
+   - Preenche automaticamente se existirem
+   - Permite marcar "Lembrar credenciais"
+   - Permite voltar e escolher outro .ovpn
+10. Na VPN ALEATÓRIA:
+    - Obtém as credenciais atuais do VPNBook
+    - Procura um perfil VPNBook já salvo
+    - Se não existir, baixa o perfil
+    - Valida o arquivo .ovpn
+    - Salva o perfil localmente
+    - Utiliza as credenciais necessárias
+11. Mostra a tela de preparação/conexão
+12. Permite voltar para a seleção do perfil antes de iniciar
+13. Ao clicar em INICIAR:
+    - Executa o OpenVPN
+    - Utiliza o perfil .ovpn selecionado
+    - Utiliza as credenciais quando necessárias
+14. Monitora o processo do OpenVPN
+15. Confirma o estabelecimento do túnel VPN
+16. Confirma o IP público
+17. Abre o Discord
+18. Aguarda o Discord iniciar
+19. Mantém a VPN durante o processo necessário
+20. Desconecta/encerra o OpenVPN
+21. Mostra o resultado final
+22. Exibe CONCLUÍDO quando todo o processo termina
 """
 
 import os
@@ -21,14 +51,17 @@ import sys
 import re
 import time
 import json
-import shutil
 import signal
 import socket
 import threading
 import subprocess
-import webbrowser
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import (
+    urlopen,
+)
+
+from html import unescape
+from urllib.request import Request
 
 import customtkinter as ctk
 import tkinter.messagebox as mb
@@ -42,7 +75,7 @@ from tkinter import filedialog
 APP_NAME = "OpenDis"
 
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 10
+WAIT_DISCORD = 60
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
@@ -79,6 +112,44 @@ DISCORD_EXECUTABLE = None
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
+# ============================================================
+# VPNBOOK
+# ============================================================
+
+VPNBOOK_URL = (
+    "https://www.vpnbook.com/pt/freevpn/openvpn"
+)
+
+VPNBOOK_API_URL = (
+    "https://www.vpnbook.com/api/openvpn"
+)
+
+# ------------------------------------------------------------
+# PADRÃO DO BOTÃO "VPN ALEATÓRIA"
+# ------------------------------------------------------------
+
+VPNBOOK_DEFAULT_SERVER = (
+    "us16.vpnbook.com"
+)
+
+VPNBOOK_DEFAULT_SERVER_NAME = (
+    "US Server 1"
+)
+
+VPNBOOK_DEFAULT_PROTOCOL = (
+    "tcp443"
+)
+
+VPNBOOK_DIR = (
+    VPN_DIR / "VPNBook"
+)
+
+VPNBOOK_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
 
 
 # ============================================================
@@ -1296,6 +1367,691 @@ def ensure_admin():
         return True
 
     return restart_as_admin()
+
+# ============================================================
+# VPNBOOK
+# ============================================================
+
+def vpnbook_fetch_page():
+    """
+    Baixa a página oficial do VPNBook.
+
+    Retorna o HTML ou None.
+    """
+
+    request = Request(
+        VPNBOOK_URL,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/149.0.0.0 "
+                "Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,"
+                "application/xhtml+xml,"
+                "application/xml;q=0.9,"
+                "*/*;q=0.8"
+            ),
+            "Accept-Language": (
+                "pt-BR,pt;q=0.9,en;q=0.8"
+            ),
+        }
+    )
+
+    try:
+
+        with urlopen(
+            request,
+            timeout=30
+        ) as response:
+
+            data = response.read()
+
+            if not data:
+                return None
+
+            return data.decode(
+                "utf-8",
+                errors="ignore"
+            )
+
+    except Exception:
+
+        return None
+
+def vpnbook_get_credentials():
+    """
+    Obtém as credenciais atuais do VPNBook.
+
+    Usuário:
+        vpnbook
+
+    A senha é obtida diretamente da página
+    oficial do VPNBook.
+
+    Retorna:
+
+        ("vpnbook", "senha")
+
+    ou:
+
+        (None, None)
+    """
+
+    html = vpnbook_fetch_page()
+
+    if not html:
+
+        return None, None
+
+    html = unescape(
+        html
+    )
+
+    password = None
+
+    patterns = [
+
+        # ----------------------------------------------------
+        # HTML atual
+        # ----------------------------------------------------
+
+        r'(?is)'
+        r'(?:Senha|Password)'
+        r'.{0,500}?'
+        r'<code[^>]*>'
+        r'\s*([^<\s]+)'
+        r'\s*</code>',
+
+        # ----------------------------------------------------
+        # strong
+        # ----------------------------------------------------
+
+        r'(?is)'
+        r'(?:Senha|Password)'
+        r'.{0,500}?'
+        r'<strong[^>]*>'
+        r'\s*([^<\s]+)'
+        r'\s*</strong>',
+
+        # ----------------------------------------------------
+        # texto simples
+        # ----------------------------------------------------
+
+        r'(?is)'
+        r'(?:Senha|Password)'
+        r'\s*[:\-]?\s*'
+        r'([A-Za-z0-9]{4,})',
+    ]
+
+    for pattern in patterns:
+
+        try:
+
+            match = re.search(
+                pattern,
+                html
+            )
+
+            if not match:
+                continue
+
+            candidate = (
+                match.group(1)
+                .strip()
+            )
+
+            # ----------------------------------------------
+            # Evitar capturar palavras da página
+            # ----------------------------------------------
+
+            if candidate.lower() in {
+                "copiar",
+                "password",
+                "senha",
+                "vpnbook",
+            }:
+                continue
+
+            if (
+                len(candidate) >= 4
+                and
+                re.fullmatch(
+                    r"[A-Za-z0-9]+",
+                    candidate
+                )
+            ):
+
+                password = candidate
+
+                break
+
+        except Exception:
+
+            continue
+
+    if not password:
+
+        return None, None
+
+    return (
+        "vpnbook",
+        password
+    )
+
+def vpnbook_find_profile(
+    server=VPNBOOK_DEFAULT_SERVER,
+    protocol=VPNBOOK_DEFAULT_PROTOCOL
+):
+    """
+    Procura um perfil VPNBook específico.
+
+    Exemplo:
+
+        us16.vpnbook.com
+        tcp443
+
+    Resultado:
+
+        vpnbook-us16.vpnbook.com-tcp443.ovpn
+    """
+
+    server = (
+        str(server)
+        .strip()
+        .lower()
+    )
+
+    protocol = (
+        str(protocol)
+        .strip()
+        .lower()
+    )
+
+    # --------------------------------------------------------
+    # Nome principal
+    # --------------------------------------------------------
+
+    filename = (
+        f"vpnbook-"
+        f"{server}-"
+        f"{protocol}.ovpn"
+    )
+
+    direct = (
+        VPNBOOK_DIR /
+        filename
+    )
+
+    if direct.exists():
+
+        return direct
+
+    # --------------------------------------------------------
+    # Compatibilidade com arquivos antigos
+    # --------------------------------------------------------
+
+    candidates = [
+        f"*{server}*{protocol}*.ovpn",
+        f"*us16*{protocol}*.ovpn",
+    ]
+
+    for pattern in candidates:
+
+        matches = sorted(
+            VPNBOOK_DIR.glob(
+                pattern
+            ),
+            key=lambda p: p.name.lower()
+        )
+
+        if matches:
+
+            return matches[0]
+
+    return None
+
+
+def vpnbook_download_profile(
+    server=VPNBOOK_DEFAULT_SERVER,
+    protocol=VPNBOOK_DEFAULT_PROTOCOL
+):
+    """
+    Baixa diretamente um perfil OpenVPN do VPNBook
+    usando a API oficial.
+
+    Padrão:
+
+        US Server 1
+        us16.vpnbook.com
+        TCP 443
+
+    Retorna:
+
+        Path do arquivo .ovpn
+    """
+
+    server = (
+        str(server)
+        .strip()
+        .lower()
+    )
+
+    protocol = (
+        str(protocol)
+        .strip()
+        .lower()
+    )
+
+    if not server:
+
+        raise RuntimeError(
+            "Servidor VPNBook não informado."
+        )
+
+    if protocol not in {
+        "tcp443",
+        "tcp80",
+        "udp53",
+        "udp25000",
+    }:
+
+        raise RuntimeError(
+            f"Protocolo VPNBook inválido: {protocol}"
+        )
+
+    # --------------------------------------------------------
+    # RESOLVER IP ATUAL DO SERVIDOR
+    # --------------------------------------------------------
+
+    try:
+
+        server_ip = socket.gethostbyname(
+            server
+        )
+
+    except Exception as e:
+
+        raise RuntimeError(
+            "Não foi possível resolver o servidor "
+            f"{server}:\n{e}"
+        )
+
+    # --------------------------------------------------------
+    # MONTAR URL DA API
+    # --------------------------------------------------------
+
+    from urllib.parse import urlencode
+
+    params = urlencode(
+        {
+            "hostname": server,
+            "protocol": protocol,
+            "ip": server_ip,
+        }
+    )
+
+    url = (
+        VPNBOOK_API_URL
+        + "?"
+        + params
+    )
+
+    # --------------------------------------------------------
+    # REQUISIÇÃO
+    # --------------------------------------------------------
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/149.0.0.0 "
+                "Safari/537.36"
+            ),
+            "Accept": (
+                "application/x-openvpn-profile,"
+                "application/octet-stream,"
+                "*/*"
+            ),
+            "Referer": VPNBOOK_URL,
+        }
+    )
+
+    try:
+
+        with urlopen(
+            request,
+            timeout=45
+        ) as response:
+
+            data = response.read()
+
+            content_type = (
+                response.headers.get(
+                    "Content-Type",
+                    ""
+                )
+                .lower()
+            )
+
+            content_disposition = (
+                response.headers.get(
+                    "Content-Disposition",
+                    ""
+                )
+            )
+
+    except Exception as e:
+
+        raise RuntimeError(
+            "Falha ao baixar o perfil OpenVPN "
+            f"do VPNBook:\n{e}"
+        )
+
+    # --------------------------------------------------------
+    # VALIDAR RESPOSTA
+    # --------------------------------------------------------
+
+    if not data:
+
+        raise RuntimeError(
+            "VPNBook retornou um arquivo vazio."
+        )
+
+    # --------------------------------------------------------
+    # CONVERTER PARA TEXTO
+    # --------------------------------------------------------
+
+    try:
+
+        profile_text = data.decode(
+            "utf-8",
+            errors="ignore"
+        )
+
+    except Exception:
+
+        profile_text = ""
+
+    # --------------------------------------------------------
+    # VERIFICAR SE REALMENTE É OVPN
+    # --------------------------------------------------------
+
+    ovpn_markers = [
+
+        "client",
+
+        "remote ",
+
+        "dev ",
+
+        "proto ",
+
+        "auth-user-pass",
+
+        "<ca>",
+
+        "<cert>",
+
+        "<key>",
+    ]
+
+    valid_profile = any(
+        marker.lower()
+        in profile_text.lower()
+        for marker in ovpn_markers
+    )
+
+    if not valid_profile:
+
+        preview = (
+            profile_text[:500]
+            .replace("\r", " ")
+            .replace("\n", " ")
+        )
+
+        raise RuntimeError(
+            "A resposta do VPNBook não parece "
+            "ser um perfil OpenVPN válido.\n\n"
+            f"Content-Type: {content_type}\n"
+            f"Resposta: {preview}"
+        )
+
+    # --------------------------------------------------------
+    # NOME PADRÃO
+    # --------------------------------------------------------
+
+    filename = (
+        f"vpnbook-"
+        f"{server}-"
+        f"{protocol}.ovpn"
+    )
+
+    # --------------------------------------------------------
+    # TENTAR PEGAR NOME DO HEADER
+    # --------------------------------------------------------
+
+    match = re.search(
+        r'filename=["\']?([^"\';]+)',
+        content_disposition,
+        re.IGNORECASE
+    )
+
+    if match:
+
+        header_name = (
+            match.group(1)
+            .strip()
+        )
+
+        if header_name.lower().endswith(
+            ".ovpn"
+        ):
+
+            filename = header_name
+
+    # --------------------------------------------------------
+    # SANITIZAR NOME
+    # --------------------------------------------------------
+
+    filename = re.sub(
+        r'[^A-Za-z0-9._-]',
+        "_",
+        filename
+    )
+
+    if not filename.lower().endswith(
+        ".ovpn"
+    ):
+
+        filename += ".ovpn"
+
+    # --------------------------------------------------------
+    # DESTINO
+    # --------------------------------------------------------
+
+    VPNBOOK_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    destination = (
+        VPNBOOK_DIR /
+        filename
+    )
+
+    # --------------------------------------------------------
+    # SALVAR
+    # --------------------------------------------------------
+
+    destination.write_text(
+        profile_text,
+        encoding="utf-8"
+    )
+
+    # --------------------------------------------------------
+    # VALIDAÇÃO FINAL
+    # --------------------------------------------------------
+
+    if not destination.exists():
+
+        raise RuntimeError(
+            "O perfil foi baixado, mas não "
+            "foi possível salvá-lo."
+        )
+
+    if destination.stat().st_size < 100:
+
+        try:
+            destination.unlink()
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "O perfil baixado pelo VPNBook "
+            "ficou pequeno demais para ser válido."
+        )
+
+    return destination
+
+def vpnbook_get_saved_profiles():
+    """
+    Retorna perfis VPNBook salvos.
+
+    O perfil padrão utilizado pela VPN aleatória
+    é US Server 1 / TCP 443.
+    """
+
+    VPNBOOK_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    return sorted(
+        VPNBOOK_DIR.glob(
+            "*.ovpn"
+        ),
+        key=lambda p: p.name.lower()
+    )
+def vpnbook_get_random_profile(
+    use_saved=True
+):
+    """
+    Obtém o perfil VPNBook utilizado pelo botão
+    "VPN ALEATÓRIA".
+
+    Atualmente o padrão é:
+
+        US Server 1
+        us16.vpnbook.com
+        TCP 443
+
+    Fluxo:
+
+        1. Obtém credenciais atuais
+        2. Procura perfil salvo
+        3. Se existir, reutiliza
+        4. Caso contrário, chama a API
+        5. Salva o .ovpn
+        6. Retorna perfil + credenciais
+
+    Retorna:
+
+        (
+            profile_path,
+            username,
+            password
+        )
+    """
+
+    # ========================================================
+    # 1. CREDENCIAIS
+    # ========================================================
+
+    username, password = (
+        vpnbook_get_credentials()
+    )
+
+    if not username or not password:
+
+        raise RuntimeError(
+            "Não foi possível obter as "
+            "credenciais atuais do VPNBook."
+        )
+
+    # ========================================================
+    # 2. PERFIL SALVO
+    # ========================================================
+
+    if use_saved:
+
+        saved = vpnbook_find_profile(
+            VPNBOOK_DEFAULT_SERVER,
+            VPNBOOK_DEFAULT_PROTOCOL
+        )
+
+        if saved:
+
+            return (
+                saved,
+                username,
+                password
+            )
+
+    # ========================================================
+    # 3. BAIXAR VIA API
+    # ========================================================
+
+    profile = vpnbook_download_profile(
+        server=VPNBOOK_DEFAULT_SERVER,
+        protocol=VPNBOOK_DEFAULT_PROTOCOL
+    )
+
+    if not profile:
+
+        raise RuntimeError(
+            "VPNBook não retornou um perfil .ovpn."
+        )
+
+    # ========================================================
+    # 4. RETORNAR
+    # ========================================================
+
+    return (
+        profile,
+        username,
+        password
+    )
+def vpnbook_get_random_saved_profile():
+    """
+    Retorna o perfil salvo padrão do VPNBook.
+
+    Padrão:
+
+        US Server 1
+        us16.vpnbook.com
+        TCP 443
+    """
+
+    profile = vpnbook_find_profile(
+        VPNBOOK_DEFAULT_SERVER,
+        VPNBOOK_DEFAULT_PROTOCOL
+    )
+
+    if profile:
+
+        return profile
+
+    return None
+
 # ============================================================
 # APP
 # ============================================================
@@ -1307,7 +2063,7 @@ class OpenDisApp(ctk.CTk):
         super().__init__()
 
         self.title(
-            "OpenDis - Discord Unlock"
+            "OpenDis - Discord Unlock -  BETA v0.5"
         )
 
         self.geometry(
@@ -1323,10 +2079,12 @@ class OpenDisApp(ctk.CTk):
         self.vpn_log_file = None
         self.current_profile = None
         self.current_public_ip = None
-
-        self.ovpn_var = None
-        self.username_var = None
-        self.password_var = None
+        self.ovpn_username = ""
+        self.ovpn_password = ""
+        self.is_vpnbook_profile = False
+        self.random_vpn_button = None
+        self.save_vpnbook_var = None
+        self.save_vpnbook_checkbox = None
 
         self.center_window()
 
@@ -1491,7 +2249,7 @@ class OpenDisApp(ctk.CTk):
             return
 
         self.status_label.configure(
-            text="✅ OpenVPN + Discord detectados"
+            text="OK: OpenVPN + Discord detectados"
         )
 
         self.after(
@@ -1807,12 +2565,12 @@ class OpenDisApp(ctk.CTk):
             ),
             text_color="#cccccc"
         ).pack(
-            pady=(45, 5)
+            pady=(40, 5)
         )
 
         ctk.CTkLabel(
             self.container,
-            text="Selecione o perfil .ovpn",
+            text="Selecione como deseja conectar",
             font=ctk.CTkFont(
                 size=13
             ),
@@ -1820,6 +2578,90 @@ class OpenDisApp(ctk.CTk):
         ).pack(
             pady=(5, 15)
         )
+
+        # ========================================================
+        # VPN ALEATÓRIA
+        # ========================================================
+
+        self.random_vpn_button = ctk.CTkButton(
+            self.container,
+            text="🎲 VPN ALEATÓRIA VPNBook",
+            command=self.random_vpn_ui,
+            fg_color="#3ba55d",
+            hover_color="#2d7d46",
+            width=330,
+            height=45,
+            font=ctk.CTkFont(
+                size=14,
+                weight="bold"
+            ),
+            corner_radius=22
+        )
+
+        self.random_vpn_button.pack(
+            pady=(5, 10)
+        )
+
+        # ========================================================
+        # GUARDAR REDE
+        # ========================================================
+
+        self.save_vpnbook_var = ctk.BooleanVar(
+            value=True
+        )
+
+        self.save_vpnbook_checkbox = (
+            ctk.CTkCheckBox(
+                self.container,
+                text="Guardar rede VPNBook",
+                variable=self.save_vpnbook_var,
+                font=ctk.CTkFont(
+                    size=12
+                ),
+                text_color="#cccccc",
+                fg_color="#5865F2",
+                hover_color="#4752C4",
+                border_color="#666675",
+                border_width=2
+            )
+        )
+
+        self.save_vpnbook_checkbox.pack(
+            pady=(3, 3)
+        )
+
+        ctk.CTkLabel(
+            self.container,
+            text=(
+                "O perfil .ovpn será salvo para "
+                "não precisar baixá-lo novamente."
+            ),
+            font=ctk.CTkFont(
+                size=10
+            ),
+            text_color="#666675"
+        ).pack(
+            pady=(0, 15)
+        )
+
+        # ========================================================
+        # SEPARADOR
+        # ========================================================
+
+        ctk.CTkLabel(
+            self.container,
+            text="— ou selecione manualmente —",
+            font=ctk.CTkFont(
+                size=11
+            ),
+            text_color="#666675"
+        ).pack(
+            pady=(0, 10)
+        )
+
+        # ========================================================
+        # PERFIS MANUAIS
+        # ========================================================
 
         files = get_ovpn_files()
 
@@ -1841,32 +2683,38 @@ class OpenDisApp(ctk.CTk):
                 variable=self.ovpn_var,
                 values=names,
                 width=330,
-                height=40
+                height=40,
+                command=lambda _: self.refresh_profile_info()
             )
 
             self.ovpn_menu.pack(
-                pady=10
+                pady=8
             )
 
         else:
 
             self.ovpn_var.set("")
 
+            self.ovpn_menu = None
+
             ctk.CTkLabel(
                 self.container,
                 text=(
-                    "Nenhum .ovpn encontrado em:\n"
+                    "Nenhum .ovpn manual encontrado em:\n"
                     f"{VPN_DIR}"
                 ),
                 font=ctk.CTkFont(
-                    size=12
+                    size=11
                 ),
-                text_color="#ffb347",
+                text_color="#666675",
                 justify="center"
             ).pack(
-                pady=10
+                pady=8
             )
 
+        # ========================================================
+        # IMPORTAR
+        # ========================================================
 
         ctk.CTkButton(
             self.container,
@@ -1874,10 +2722,15 @@ class OpenDisApp(ctk.CTk):
             command=self.import_profile,
             fg_color="#2f3136",
             hover_color="#40444b",
-            height=40
+            width=330,
+            height=38
         ).pack(
-            pady=10
+            pady=8
         )
+
+        # ========================================================
+        # INFORMAÇÃO
+        # ========================================================
 
         self.credentials_hint = ctk.CTkLabel(
             self.container,
@@ -1895,22 +2748,27 @@ class OpenDisApp(ctk.CTk):
         self.username_entry = None
         self.password_entry = None
 
+        # ========================================================
+        # CONTINUAR
+        # ========================================================
+
         self.continue_btn = ctk.CTkButton(
             self.container,
             text="➡️ CONTINUAR",
             command=self.profile_selected,
             fg_color="#5865F2",
             hover_color="#4752C4",
-            height=48,
+            height=46,
+            width=330,
             font=ctk.CTkFont(
-                size=16,
+                size=15,
                 weight="bold"
             ),
-            corner_radius=25
+            corner_radius=23
         )
 
         self.continue_btn.pack(
-            pady=20
+            pady=15
         )
 
         self.refresh_profile_info()
@@ -2167,25 +3025,46 @@ class OpenDisApp(ctk.CTk):
                 True
             )
 
-        # ========================================================
-        # CONTINUAR
-        # ========================================================
+            # ========================================================
+            # CONTINUAR
+            # ========================================================
 
-        ctk.CTkButton(
-            self.container,
-            text="➡️ CONTINUAR",
-            command=self.credentials_submitted,
-            fg_color="#5865F2",
-            hover_color="#4752C4",
-            height=48,
-            font=ctk.CTkFont(
-                size=16,
-                weight="bold"
-            ),
-            corner_radius=25
-        ).pack(
-            pady=20
-        )
+            ctk.CTkButton(
+                self.container,
+                text="➡️ CONTINUAR",
+                command=self.credentials_submitted,
+                fg_color="#5865F2",
+                hover_color="#4752C4",
+                height=48,
+                font=ctk.CTkFont(
+                    size=16,
+                    weight="bold"
+                ),
+                corner_radius=25
+            ).pack(
+                pady=(15, 8)
+            )
+
+            # ========================================================
+            # VOLTAR
+            # ========================================================
+
+            ctk.CTkButton(
+                self.container,
+                text="← VOLTAR",
+                command=self.back_to_profile_screen,
+                fg_color="#4a4a5a",
+                hover_color="#383846",
+                width=180,
+                height=35,
+                font=ctk.CTkFont(
+                    size=13,
+                    weight="bold"
+                ),
+                corner_radius=18
+            ).pack(
+                pady=(0, 10)
+            )
 
     def credentials_submitted(self):
 
@@ -2280,6 +3159,17 @@ class OpenDisApp(ctk.CTk):
     # ========================================================
     # TELA DE EXECUÇÃO
     # ========================================================
+    def back_to_profile_screen(self):
+        """
+        Volta para a tela de seleção/configuração da VPN.
+        """
+        self.current_profile = None
+        self.ovpn_username = ""
+        self.ovpn_password = ""
+        self.is_vpnbook_profile = False
+
+        self.show_profile_screen()
+
 
     def show_connect_screen(self):
 
@@ -2287,7 +3177,7 @@ class OpenDisApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.container,
-            text="🚀 Pronto para desbloquear!",
+            text="🚀 Pronto para iniciar!",
             font=ctk.CTkFont(
                 size=24,
                 weight="bold"
@@ -2300,11 +3190,11 @@ class OpenDisApp(ctk.CTk):
         ctk.CTkLabel(
             self.container,
             text=(
-                "1️- Conectar VPN\n"
-                "2️- Confirmar rede\n"
-                "3️- Abrir Discord\n"
-                "4️- Aguardar Discord\n"
-                "5️- Desconectar VPN\n"
+                "1 - Conectar VPN\n"
+                "2 - Confirmar rede\n"
+                "3 - Abrir Discord\n"
+                "4 - Aguardar Discord\n"
+                "5 - Desconectar VPN\n"
             ) ,
             font=ctk.CTkFont(
                 size=13
@@ -2356,7 +3246,24 @@ class OpenDisApp(ctk.CTk):
         self.start_btn.pack(
             pady=12
         )
+        self.back_btn = ctk.CTkButton(
+            self.container,
+            text="← VOLTAR",
+            command=self.back_to_profile_screen,
+            fg_color="#4a4a5a",
+            hover_color="#383846",
+            width=180,
+            height=35,
+            font=ctk.CTkFont(
+                size=13,
+                weight="bold"
+            ),
+            corner_radius=18
+        )
 
+        self.back_btn.pack(
+            pady=(0, 10)
+        )
         self.final_status = ctk.CTkLabel(
             self.container,
             text="",
@@ -2408,7 +3315,271 @@ class OpenDisApp(ctk.CTk):
         except Exception:
             pass
 
+        # ========================================================
+        # VPN ALEATÓRIA
+        # ========================================================
 
+    def random_vpn_ui(self):
+
+        try:
+
+            self.random_vpn_button.configure(
+                state="disabled",
+                text="🔄 Obtendo VPN..."
+            )
+
+            self.save_vpnbook_checkbox.configure(
+                state="disabled"
+            )
+
+        except Exception:
+            pass
+
+        threading.Thread(
+            target=self._random_vpn_worker,
+            daemon=True
+        ).start()
+
+    def _random_vpn_worker(self):
+
+        try:
+
+            # ----------------------------------------------------
+            # Verificar opção guardar
+            # ----------------------------------------------------
+
+            save_network = True
+
+            try:
+
+                save_network = bool(
+                    self.save_vpnbook_var.get()
+                )
+
+            except Exception:
+
+                pass
+
+            # ----------------------------------------------------
+            # Informar o que está fazendo
+            # ----------------------------------------------------
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🌐 VPNBook: US Server 1"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔌 Protocolo: TCP 443"
+                )
+            )
+
+            # ----------------------------------------------------
+            # Procurar perfil salvo
+            # ----------------------------------------------------
+
+            profile = None
+
+            if save_network:
+                profile = (
+                    vpnbook_find_profile(
+                        VPNBOOK_DEFAULT_SERVER,
+                        VPNBOOK_DEFAULT_PROTOCOL
+                    )
+                )
+
+            # ----------------------------------------------------
+            # Perfil já existente
+            # ----------------------------------------------------
+
+            if profile:
+
+                self.after(
+                    0,
+                    lambda p=profile:
+                    self.log(
+                        f"💾 Rede salva encontrada: {p.name}"
+                    )
+                )
+
+                username, password = (
+                    vpnbook_get_credentials()
+                )
+
+                if not username or not password:
+                    raise RuntimeError(
+                        "Não foi possível obter "
+                        "a senha atual do VPNBook."
+                    )
+
+                result = (
+                    profile,
+                    username,
+                    password
+                )
+
+            # ----------------------------------------------------
+            # Baixar novo perfil
+            # ----------------------------------------------------
+
+            else:
+
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "📥 Baixando configuração OpenVPN..."
+                    )
+                )
+
+                result = (
+                    vpnbook_get_random_profile(
+                        use_saved=False
+                    )
+                )
+
+                profile, username, password = (
+                    result
+                )
+
+                self.after(
+                    0,
+                    lambda p=profile:
+                    self.log(
+                        f"✅ .ovpn baixado: {p.name}"
+                    )
+                )
+
+            # ----------------------------------------------------
+            # Atualizar GUI
+            # ----------------------------------------------------
+
+            self.after(
+                0,
+                lambda p=profile,
+                       u=username,
+                       pw=password:
+                self._random_vpn_success(
+                    p,
+                    u,
+                    pw
+                )
+            )
+
+        except Exception as e:
+
+            error = str(e)
+
+            self.after(
+                0,
+                lambda msg=error:
+                self._random_vpn_error(
+                    msg
+                )
+            )
+
+    def _random_vpn_success(
+            self,
+            profile,
+            username,
+            password
+    ):
+
+        # ----------------------------------------------------
+        # Perfil atual
+        # ----------------------------------------------------
+
+        self.current_profile = Path(
+            profile
+        )
+
+        # ----------------------------------------------------
+        # Credenciais
+        # ----------------------------------------------------
+
+        self.ovpn_username = (
+            username
+        )
+
+        self.ovpn_password = (
+            password
+        )
+
+        # ----------------------------------------------------
+        # Origem
+        # ----------------------------------------------------
+
+        self.is_vpnbook_profile = True
+
+        # ----------------------------------------------------
+        # Mostrar informações
+        # ----------------------------------------------------
+
+        try:
+
+            self.log(
+                "🎲 VPNBook preparada."
+            )
+
+            self.log(
+                "🇺🇸 Servidor: US Server 1"
+            )
+
+            self.log(
+                "🔌 Protocolo: TCP 443"
+            )
+
+            self.log(
+                f"📄 Perfil: {self.current_profile.name}"
+            )
+
+            self.log(
+                f"👤 Usuário: {username}"
+            )
+
+        except Exception:
+
+            pass
+
+        # ----------------------------------------------------
+        # Continuar
+        # ----------------------------------------------------
+
+        self.show_connect_screen()
+
+    def _random_vpn_error(
+            self,
+            error
+    ):
+
+        try:
+
+            self.random_vpn_button.configure(
+                state="normal",
+                text="🎲 VPN ALEATÓRIA"
+            )
+
+            self.save_vpnbook_checkbox.configure(
+                state="normal"
+            )
+
+        except Exception:
+            pass
+
+        mb.showerror(
+            "VPN Aleatória",
+            (
+                "Não foi possível obter uma VPN "
+                "aleatória do VPNBook.\n\n"
+                f"{error[:1500]}"
+            )
+        )
     # ========================================================
     # INICIAR
     # ========================================================
@@ -3013,14 +4184,14 @@ class OpenDisApp(ctk.CTk):
             )
 
             # ====================================================
-            # 15. ESPERAR 5 SEGUNDOS
+            # 15. ESPERAR 60 SEGUNDOS
             # ====================================================
 
             self.after(
                 0,
                 lambda:
                 self.log(
-                    "⏳ Aguardando 5 segundos..."
+                    "⏳ Aguardando Discord estabilizar ..."
                 )
             )
 
