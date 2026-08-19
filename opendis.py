@@ -55,6 +55,7 @@ import signal
 import socket
 import threading
 import subprocess
+import webbrowser
 from pathlib import Path
 from urllib.request import (
     urlopen,
@@ -75,7 +76,7 @@ from tkinter import filedialog
 APP_NAME = "OpenDis"
 
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 60
+WAIT_DISCORD = 25
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
@@ -2063,7 +2064,7 @@ class OpenDisApp(ctk.CTk):
         super().__init__()
 
         self.title(
-            "OpenDis - Discord Unlock -  BETA v0.5"
+            "OpenDis - v1.0"
         )
 
         self.geometry(
@@ -2101,9 +2102,20 @@ class OpenDisApp(ctk.CTk):
 
         self.footer = ctk.CTkLabel(
             self,
-            text="powered by Magnatatile",
-            font=ctk.CTkFont(size=10),
-            text_color="#666675"
+            text="powered by MagnataTile",
+            font=ctk.CTkFont(
+                size=10,
+                underline=True
+            ),
+            text_color="#7289da",
+            cursor="hand2"
+        )
+
+        self.footer.bind(
+            "<Button-1>",
+            lambda event: webbrowser.open(
+                "https://github.com/MagnataTile/OpenDis"
+            )
         )
 
         self.footer.place(
