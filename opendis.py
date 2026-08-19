@@ -76,7 +76,7 @@ from tkinter import filedialog
 APP_NAME = "OpenDis"
 
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 25
+WAIT_DISCORD = 10
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
@@ -3009,6 +3009,10 @@ class OpenDisApp(ctk.CTk):
 
             saved_credentials = None
 
+        # ========================================================
+        # PREENCHER CREDENCIAL SALVA
+        # ========================================================
+
         if saved_credentials:
 
             username = saved_credentials.get(
@@ -3037,46 +3041,46 @@ class OpenDisApp(ctk.CTk):
                 True
             )
 
-            # ========================================================
-            # CONTINUAR
-            # ========================================================
+        # ========================================================
+        # CONTINUAR
+        # ========================================================
 
-            ctk.CTkButton(
-                self.container,
-                text="➡️ CONTINUAR",
-                command=self.credentials_submitted,
-                fg_color="#5865F2",
-                hover_color="#4752C4",
-                height=48,
-                font=ctk.CTkFont(
-                    size=16,
-                    weight="bold"
-                ),
-                corner_radius=25
-            ).pack(
-                pady=(15, 8)
-            )
+        ctk.CTkButton(
+            self.container,
+            text="➡️ CONTINUAR",
+            command=self.credentials_submitted,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            height=48,
+            font=ctk.CTkFont(
+                size=16,
+                weight="bold"
+            ),
+            corner_radius=25
+        ).pack(
+            pady=(15, 8)
+        )
 
-            # ========================================================
-            # VOLTAR
-            # ========================================================
+        # ========================================================
+        # VOLTAR
+        # ========================================================
 
-            ctk.CTkButton(
-                self.container,
-                text="← VOLTAR",
-                command=self.back_to_profile_screen,
-                fg_color="#4a4a5a",
-                hover_color="#383846",
-                width=180,
-                height=35,
-                font=ctk.CTkFont(
-                    size=13,
-                    weight="bold"
-                ),
-                corner_radius=18
-            ).pack(
-                pady=(0, 10)
-            )
+        ctk.CTkButton(
+            self.container,
+            text="← VOLTAR",
+            command=self.back_to_profile_screen,
+            fg_color="#4a4a5a",
+            hover_color="#383846",
+            width=180,
+            height=35,
+            font=ctk.CTkFont(
+                size=13,
+                weight="bold"
+            ),
+            corner_radius=18
+        ).pack(
+            pady=(0, 10)
+        )
 
     def credentials_submitted(self):
 
@@ -3161,9 +3165,46 @@ class OpenDisApp(ctk.CTk):
                     self.current_profile
                 )
 
-        # ========================================================
-        # CONTINUAR
-        # ========================================================
+                # ========================================================
+                # CONTINUAR
+                # ========================================================
+
+                ctk.CTkButton(
+                    self.container,
+                    text="➡️ CONTINUAR",
+                    command=self.credentials_submitted,
+                    fg_color="#5865F2",
+                    hover_color="#4752C4",
+                    height=48,
+                    font=ctk.CTkFont(
+                        size=16,
+                        weight="bold"
+                    ),
+                    corner_radius=25
+                ).pack(
+                    pady=(15, 8)
+                )
+
+                # ========================================================
+                # VOLTAR
+                # ========================================================
+
+                ctk.CTkButton(
+                    self.container,
+                    text="← VOLTAR",
+                    command=self.back_to_profile_screen,
+                    fg_color="#4a4a5a",
+                    hover_color="#383846",
+                    width=180,
+                    height=35,
+                    font=ctk.CTkFont(
+                        size=13,
+                        weight="bold"
+                    ),
+                    corner_radius=18
+                ).pack(
+                    pady=(0, 10)
+                )
 
         self.show_connect_screen()
 
