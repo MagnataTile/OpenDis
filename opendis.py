@@ -138,12 +138,12 @@ VPNBOOK_SERVERS = [
         "protocol": "tcp443",
     },
     {
-        "server": "us17.vpnbook.com",
+        "server": "us178.vpnbook.com",
         "name": "US Server 2",
         "protocol": "tcp443",
     },
     {
-        "server": "ca196.vpnbook.com",
+        "server": "ca149.vpnbook.com",
         "name": "Canada Server",
         "protocol": "tcp443",
     },

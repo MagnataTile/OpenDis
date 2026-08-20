@@ -60,6 +60,11 @@ Se o Discord já estiver aberto, o fluxo de inicialização controlada pode não
 
 ---
 
+### ⚠️ Evite buscar partidas online durante a execução do OpenDis
+
+Enquanto o OpenDis estiver em execução, evite iniciar ou buscar partidas em jogos online, pois a conexão poderá estar utilizando um servidor VPN estrangeiro, o que pode direcioná-lo para servidores ou partidas de outras regiões.
+
+---
 ## ⏳ Discord pode ficar alguns segundos sem conexão
 
 Ao fechar o OpenDis, é **normal que o Discord permaneça alguns segundos mostrando ausência de conexão**.
