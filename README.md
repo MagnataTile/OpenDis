@@ -20,34 +20,28 @@
 </p>
 
 ---
-
+## 👉 **[📥 Baixar a última versão](https://github.com/MagnataTile/OpenDis/releases)**
 ## 🛡️ Sobre
 
-O **OpenDis** é uma aplicação Windows criada para centralizar o uso de VPN através do **OpenVPN Community** e controlar a inicialização do Discord somente depois que a conexão VPN estiver pronta.
+**OpenDis** é uma aplicação para Windows criada para simplificar o processo de **conectar uma VPN e iniciar o Discord**.
 
-A aplicação gerencia os perfis `.ovpn`, credenciais, conexão, validação do túnel, verificação do IP público e inicialização do Discord.
+A proposta é simples: substituir o processo manual de abrir uma VPN, selecionar uma região, conectar à VPN, aguardar a conexão e então abrir o Discord.
 
-O fluxo principal é:
+Tudo isso é centralizado em uma única aplicação.
 
-```text
-OpenDis
-   ↓
-Selecionar VPN
-   ↓
-Verificar credenciais
-   ↓
-Iniciar OpenVPN
-   ↓
-Aguardar conexão
-   ↓
-Confirmar IP público
-   ↓
-Iniciar Discord
-   ↓
-Utilizar normalmente
-   ↓
-Encerrar OpenVPN
-```
+O OpenDis funciona como uma **interface de automação para abrir o Discord**. 
+### 🔐 O que o OpenDis faz
+
+- Detecta o **OpenVPN Community** e o **Discord** instalado no Windows.
+
+- Inicia o OpenVPN automaticamente.
+- Aguarda a conexão VPN ser estabelecida.
+- Verifica se a conexão VPN está realmente ativa.
+- Verifica o IP público após a conexão.
+- Inicia o Discord somente após a VPN estar conectada.
+- Encerra a conexão VPN pelo próprio aplicativo.
+- Fecha o processo do OpenVPN quando a sessão é encerrada.
+- Pode utilizar configurações de VPN salvas para agilizar a proxima abertura.
 
 ---
 
@@ -59,21 +53,8 @@ O **Discord precisa estar completamente fechado antes de iniciar o OpenDis**.
 
 O OpenDis é responsável por iniciar o Discord **depois que a VPN estiver conectada e validada**.
 
-Portanto, antes de abrir o OpenDis:
+Portanto, antes de abrir o OpenDis, feche completamente o Discord.
 
-```text
-Discord
-   ↓
-FECHADO
-   ↓
-Abrir OpenDis
-   ↓
-Conectar VPN
-   ↓
-Validar VPN
-   ↓
-OpenDis inicia o Discord
-```
 
 Se o Discord já estiver aberto, o fluxo de inicialização controlada pode não funcionar corretamente.
 
@@ -85,19 +66,12 @@ Ao fechar o OpenDis, é **normal que o Discord permaneça alguns segundos mostra
 
 Isso acontece porque o Discord pode levar um pequeno período para perceber a alteração da conexão de rede após o encerramento da VPN.
 
-Não é necessário reiniciar o Discord imediatamente.
+Não reinicie o Discord, isso fara você perder o processo de conexão.
 
 A conexão normalmente retorna sozinha após alguns segundos.
 
-```text
-OpenDis fechado
-      ↓
-VPN encerrada
-      ↓
-Discord pode ficar alguns segundos sem conexão
-      ↓
-Discord reconecta automaticamente
-```
+### Troque de canal de voz para forçar estabilizacão mais rápida.
+
 
 ---
 
@@ -118,16 +92,20 @@ ou se, mesmo depois de iniciar o compartilhamento, ele continuar **bloqueado**, 
 O problema pode estar relacionado ao servidor VPN utilizado pelo perfil atual.
 
 ```text
-Discord com problema
+Desmarque a opção GUARDAR REDE VPNBOOK
        ↓
-Trocar perfil .ovpn
+Clique em VPN ALEARTÓRIA VPNBook 
        ↓
-Conectar novamente
+Iniciar
+       ↓
+Espera o Concluído
        ↓
 Testar Discord
 ```
 
-Se estiver utilizando a opção **VPN ALEATÓRIA**, tente novamente para obter outro perfil disponível.
+Se mesmo assim a opção **VPN ALEATÓRIA** não trocar o ip, ou o Discord não abrir a tempo, tente apagar os arquivos da pasta VPNBooK criada pelo app, e repita o processo.
+
+Você pode usar uma configuração personalizada gratuita, mais informações aqui.
 
 ---
 
@@ -169,22 +147,33 @@ Se estiver utilizando a opção **VPN ALEATÓRIA**, tente novamente para obter o
 
 ---
 
-# 📂 Perfis VPN
+## 📁 Estrutura de arquivos
 
-Os perfis `.ovpn` utilizados pelo OpenDis ficam na pasta:
+O OpenDis mantém seus arquivos organizados no mesmo diretório onde o programa está sendo executado.
+
+Ao iniciar, o programa cria automaticamente as pastas necessárias caso elas ainda não existam.
+
+A estrutura do projeto em execução fica assim:
 
 ```text
-OpenDis/
+/
+├── OpenDis.exe
 │
-├── README.md
-├── logo.png
-├── opendis6.py
+├── Logs/
+│   ├── opendis_20260119_070337.log
+│   └── ...
 │
 └── VPN/
     ├── perfil1.ovpn
-    ├── perfil2.ovpn
-    └── ...
-```
+    ├── perfil1.ovpn
+    ├── ...
+    └── VPNBook/
+        ├── vpnbook-ca196-tcp443.ovpn
+        ├── vpnbook-us17-tcp443.ovpn
+        ├── vpnbook-us16-tcp443.ovpn
+        └── ...
+        
+```       
 
 Ao abrir a seleção de VPN, os perfis disponíveis são apresentados para utilização.
 
@@ -201,18 +190,18 @@ O usuário pode:
 Para adicionar uma configuração OpenVPN:
 
 ```text
-Adicionar .ovpn
+Adicionar / Selecionar .ovpn
       ↓
 Selecionar arquivo
       ↓
-Copiar para OpenDis/VPN
+Clique em Continuar
       ↓
-Atualizar lista
+Poderá ou não solicitar senha
       ↓
-Perfil disponível
+Iniciar normalmente
 ```
 
-Depois da importação, o novo perfil poderá ser selecionado normalmente.
+
 
 ---
 
@@ -248,41 +237,16 @@ Perfil disponível?
      OpenVPN
 ```
 
-As credenciais disponibilizadas pelo serviço também podem ser obtidas para permitir a utilização do perfil.
-
-Como essas informações podem mudar, o OpenDis não depende exclusivamente de valores fixos armazenados localmente.
-
----
-
-# 🔎 Análise do perfil `.ovpn`
-
-Antes de iniciar a conexão, o OpenDis analisa o perfil selecionado.
-
-Entre outras informações, é verificado se a configuração exige autenticação.
-
-```text
-Perfil selecionado
-       ↓
-Analisar .ovpn
-       ↓
-Precisa de credenciais?
-      /        \
-    NÃO        SIM
-     │           │
-     │      Verificar salvas
-     │           │
-     │      Usuário/Senha
-     │           │
-     └─────┬─────┘
-           ↓
-       Preparação
-```
 
 ---
 
 # 🔐 Credenciais
 
-Quando o perfil exige autenticação, o OpenDis apresenta os campos necessários:
+
+
+
+
+Quando o perfil VPN exige autenticação, o OpenDis apresenta os campos necessários:
 
 ```text
 Usuário:
@@ -292,37 +256,107 @@ Senha:
 [________________________]
 
 ☐ Lembrar credenciais
-```
+````
 
-Se existirem credenciais salvas para aquele perfil, elas podem ser carregadas automaticamente.
+Se o usuário optar por **lembrar as credenciais**, o OpenDis não armazena o usuário ou a senha em arquivos próprios da aplicação.
 
-O usuário também pode alterar os dados antes de iniciar a conexão.
+As credenciais são armazenadas utilizando o **Gerenciador de Credenciais do Windows (Windows Credential Manager)**, ficando sob responsabilidade do próprio sistema operacional.
 
----
+## 🔒 Segurança das credenciais
 
-## 💾 Lembrar credenciais
+O OpenDis **não salva as credenciais em arquivos**
 
-A opção **Lembrar credenciais** permite reutilizar os dados em futuras conexões do mesmo perfil.
+
+Quando a opção **"Lembrar credenciais"** é utilizada, o OpenDis solicita ao Windows que armazene as credenciais através do mecanismo nativo de gerenciamento de credenciais do sistema.
+
+O fluxo funciona da seguinte forma:
 
 ```text
-Primeiro acesso
-      ↓
-Usuário + senha
-      ↓
-Lembrar credenciais
-      ↓
-Dados armazenados
-      ↓
-Próximo acesso
-      ↓
-Preenchimento automático
+Usuário informa as credenciais
+            ↓
+         OpenDis
+            ↓
+Windows Credential Manager
+            ↓
+Credencial protegida pelo Windows
 ```
 
-As credenciais são vinculadas ao perfil utilizado, permitindo que diferentes `.ovpn` tenham configurações de autenticação diferentes.
+Caso a opção **"Lembrar credenciais"** não seja selecionada, as credenciais são utilizadas apenas durante a sessão atual e não são solicitadas para armazenamento permanente pelo OpenDis.
+
+> **Importante:** o armazenamento e a proteção das credenciais salvas são realizados pelo próprio Windows. O OpenDis apenas solicita ao sistema operacional que armazene ou recupere essas credenciais.
+
+
+
+
 
 ---
+# 🔄 Resumo do Fluxo completo do programa
 
-# ⚙️ Preparação da conexão
+Para entender o funcionamento do OpenDis sem entrar nos detalhes individuais:
+
+```text
+┌──────────────────────┐
+│      Abrir OpenDis   │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Verificar OpenVPN    │
+│ e Discord            │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Selecionar VPN       │
+│ Manual / Aleatória   │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Analisar .ovpn       │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Verificar            │
+│ credenciais          │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Preparar conexão     │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│      INICIAR         │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│      OpenVPN         │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Túnel estabelecido   │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Confirmar IP público │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│       Discord        │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│     Utilização       │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│ Encerrar OpenVPN     │
+└──────────┬───────────┘
+           ↓
+┌──────────────────────┐
+│      CONCLUÍDO       │
+└──────────────────────┘
+```
+---
+
+# ⚙️ Funcionamento do OpenDis
 
 Depois da escolha do perfil e do tratamento das credenciais, o OpenDis apresenta a etapa de preparação.
 
@@ -458,25 +492,6 @@ Após isso, o Discord pode levar alguns segundos para reconhecer a alteração d
 
 ---
 
-# 📁 Estrutura do projeto
-
-Uma estrutura típica do projeto:
-
-```text
-OpenDis/
-│
-├── README.md
-├── logo.png
-├── opendis6.py
-│
-└── VPN/
-    ├── *.ovpn
-    └── perfis VPN armazenados
-```
-
-Dependendo da configuração e da versão utilizada, a aplicação também pode criar diretórios e arquivos auxiliares para logs, credenciais e configurações.
-
----
 
 # 💻 Requisitos
 
@@ -496,12 +511,15 @@ O OpenDis foi desenvolvido considerando um ambiente Windows com o OpenVPN Commun
 
 ---
 
+
 # 🐍 Executando pelo código-fonte
+
+Caso você queira executar o OpenDis diretamente pelo código-fonte, siga os passos abaixo.
 
 Clone o projeto:
 
 ```bash
-git clone 
+git clone https://github.com/MagnataTile/OpenDis.git
 ```
 
 Entre no diretório:
@@ -526,43 +544,61 @@ python opendis.py
 
 ### Antes de executar
 
-Feche completamente o Discord.
+Feche completamente o Discord antes de iniciar o OpenDis.
 
-```text
-Discord fechado
-      ↓
-Executar OpenDis
-      ↓
-Selecionar VPN
-      ↓
-Iniciar conexão
-```
 
 ---
 
 # 📦 Executável
 
-O OpenDis também pode ser distribuído como executável utilizando **PyInstaller**.
+## 🚀 Baixar a versão mais recente
 
-Exemplo:
+A maneira mais simples de utilizar o OpenDis é baixar a versão já compilada diretamente na página de **Releases** do projeto.
+
+👉 **[📥 Baixar a última versão](https://github.com/MagnataTile/OpenDis/releases)**
+
+Na página de Releases, procure pela versão mais recente e baixe o executável `.exe` ou arquivo `.zip` disponibilizado.
+
+
+> Não é necessário instalar Python, instalar as dependências ou compilar o projeto. Basta baixar a versão .exe disponível nas Releases.
+
+
+---
+
+# 🛠️ Gerando seu próprio executável
+
+Caso você tenha clonado o projeto e queira gerar sua própria versão do `OpenDis.exe`, é possível utilizar o **PyInstaller**.
+
+Depois de instalar as dependências:
+
+```bash
+pip install -r requirements.txt
+```
+
+Execute:
 
 ```bash
 pyinstaller --clean --noconfirm OpenDis.spec
 ```
 
-O executável normalmente será gerado em:
+O executável normalmente será gerado dentro da pasta:
 
 ```text
 dist/
 ```
 
-O OpenDis cria as pastas necessárias para VPN e logs no local em que for executado.
-
-Para uma utilização correta, mantenha os arquivos e diretórios necessários junto do `OpenDis.exe`, especialmente a pasta:
+Estrutura esperada:
 
 ```text
-VPN/
+dist/
+└── OpenDis.exe
 ```
+
+Você pode utilizar esse executável para testar sua própria compilação do projeto.
+> Lembre-se de criar uma cópia do arquivo anterior e manter as pastas ***build*** e ***dist***  limpa na hora de gerar seu executável.
+
+
+---
 
 ---
 
@@ -580,31 +616,8 @@ VPN/
 
 ---
 
-# 🛠️ Tratamento de erros
 
-O OpenDis deve impedir que uma etapa inválida avance silenciosamente.
-
-Entre as situações que podem ser identificadas:
-
-```text
-OpenVPN não encontrado
-Discord não encontrado
-Perfil .ovpn inválido
-Arquivo VPN inexistente
-Credenciais ausentes
-Falha de autenticação
-Falha na conexão
-Túnel não estabelecido
-IP não confirmado
-Falha ao iniciar Discord
-Processo OpenVPN encerrado inesperadamente
-```
-
-Quando uma etapa não pode ser concluída, o fluxo pode ser interrompido ou retornar para uma etapa anterior, conforme o tipo de erro.
-
----
-
-# 🔐 Segurança
+# 🔐 Sua Segurança
 
 O OpenDis é uma ferramenta local para automação de conexões VPN.
 
@@ -629,8 +642,8 @@ Isso permite atualizar ou substituir o perfil utilizado sem que o usuário preci
 
 ---
 
-# ⚠️ Solução de problemas
 
+# ⚠️ Solução de problemas
 ## Discord não inicia corretamente
 
 Verifique:
@@ -691,71 +704,38 @@ Reconexão automática
 Aguarde alguns segundos antes de considerar que existe um problema.
 
 ---
+# 🛠️ Tratamento de erros
 
-# 🔄 Fluxo completo
+O OpenDis deve impedir que uma etapa inválida avance silenciosamente.
 
-Para entender o funcionamento do OpenDis sem entrar nos detalhes individuais:
+Entre as situações que podem ser identificadas:
 
-```text
-┌──────────────────────┐
-│      Abrir OpenDis   │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Verificar OpenVPN    │
-│ e Discord            │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Selecionar VPN       │
-│ Manual / Aleatória   │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Analisar .ovpn       │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Verificar            │
-│ credenciais          │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Preparar conexão     │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│      INICIAR         │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│      OpenVPN         │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Túnel estabelecido   │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Confirmar IP público │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│       Discord        │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│     Utilização       │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│ Encerrar OpenVPN     │
-└──────────┬───────────┘
-           ↓
-┌──────────────────────┐
-│      CONCLUÍDO       │
-└──────────────────────┘
-```
+# 📌 Resumo dos principais erros
+
+| Erro | Tratamento | Solução |
+|---|---|---|
+| OpenVPN não encontrado | Interrompe | Instalar o OpenVPN |
+| Discord não encontrado | Interrompe | Instalar o Discord |
+| `winget` indisponível | Instalação automática falha | Instalação manual |
+| Nenhum `.ovpn` selecionado | Interrompe | Selecionar um perfil |
+| Perfil não encontrado | Interrompe | Adicionar o perfil novamente |
+| Arquivo não é `.ovpn` | Interrompe | Utilizar um arquivo `.ovpn` válido |
+| Credenciais não informadas | Interrompe | Informar usuário e senha |
+| `AUTH_FAILED` | Interrompe | Corrigir as credenciais |
+| `TLS Error` | Interrompe | Trocar o servidor ou perfil |
+| `Cannot open TUN/TAP` | Interrompe | Verificar ou reinstalar o OpenVPN |
+| `Options error` | Interrompe | Corrigir ou trocar o perfil `.ovpn` |
+| `Connection failed` | Interrompe | Tentar outro servidor |
+| OpenVPN encerra antes de conectar | Interrompe | Trocar o perfil `.ovpn` |
+| Timeout da VPN | Interrompe | Tentar novamente ou utilizar outro perfil |
+| IP não pôde ser consultado | Aviso | Verificar a conexão com a internet e tentar novamente |
+| IP não mudou | Aviso | Verificar a conexão ou trocar o perfil |
+| Discord não inicia | Interrompe | Reiniciar o Discord e tentar novamente |
+| VPN não desconecta | Tenta múltiplos métodos | Verificar o processo `openvpn.exe` |
+| Erro durante a execução | Limpeza automática | Consultar os arquivos de log |
+
+Quando uma etapa não pode ser concluída, o fluxo pode ser interrompido ou retornar para uma etapa anterior, conforme o tipo de erro.
+
 
 ---
 
@@ -763,23 +743,7 @@ Para entender o funcionamento do OpenDis sem entrar nos detalhes individuais:
 
 O objetivo do OpenDis é eliminar a necessidade de controlar manualmente várias ferramentas para utilizar uma conexão VPN.
 
-Em vez de alternar entre:
 
-```text
-OpenVPN
-   ↓
-Perfil .ovpn
-   ↓
-Credenciais
-   ↓
-Conexão
-   ↓
-Verificação de IP
-   ↓
-Discord
-```
-
-o usuário utiliza uma única aplicação para controlar esse fluxo.
 
 ```text
 ┌───────────────────────────┐
@@ -788,21 +752,13 @@ o usuário utiliza uma única aplicação para controlar esse fluxo.
 │ Gerenciamento de VPN      │
 │ Perfis .ovpn              │
 │ Credenciais               │
-│ Controle do OpenVPN        │
+│ Controle do OpenVPN       │
 │ Verificação de IP         │
 │ Inicialização do Discord  │
 └───────────────────────────┘
 ```
 
----
 
-# 📌 Status
-
-🚧 **Em desenvolvimento**
-
-O projeto continua recebendo melhorias relacionadas à interface, gerenciamento de VPNs, automação, tratamento de erros e experiência de utilização.
-
----
 
 # ⚠️ Aviso
 
@@ -816,8 +772,7 @@ O usuário é responsável por:
 * Manter suas credenciais protegidas.
 * Verificar os arquivos `.ovpn` utilizados.
 
-O projeto não garante anonimato absoluto, segurança absoluta ou proteção contra falhas de terceiros.
-
+> ⚠️  O OpenDis é apenas uma ferramenta de automação. Ele não fornece, modifica ou cria serviços de VPN, apenas automatiza o processo de abrir e conectar uma VPN já existente e, após a conexão, iniciar o Discord. O projeto não possui finalidade ilegal e não incentiva qualquer uso indevido. O usuário é responsável pela utilização do software, pelas VPNs utilizadas e pelas atividades realizadas durante seu uso.
 ---
 
 <p align="center">
