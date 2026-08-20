@@ -87,27 +87,35 @@ Carregando...
 
 ou se, mesmo depois de iniciar o compartilhamento, ele continuar **bloqueado**, faça o seguinte:
 
-### Troque o perfil `.ovpn`
+### 🔄 Troque o perfil `.ovpn`
 
 O problema pode estar relacionado ao servidor VPN utilizado pelo perfil atual.
 
 ```text
 Desmarque a opção GUARDAR REDE VPNBOOK
        ↓
-Clique em VPN ALEARTÓRIA VPNBook 
+Clique em VPN ALEATÓRIA VPNBook
        ↓
-Iniciar
+Clique em Iniciar
        ↓
-Espera o Concluído
+Aguarde até aparecer "Concluído"
        ↓
-Testar Discord
+Teste o Discord
 ```
 
-Se mesmo assim a opção **VPN ALEATÓRIA** não trocar o ip, ou o Discord não abrir a tempo, tente apagar os arquivos da pasta VPNBooK criada pelo app, e repita o processo.
+Se a **VPN ALEATÓRIA** não trocar o IP ou o Discord continuar demorando para abrir, tente apagar os arquivos da pasta **VPNBook** criada pelo aplicativo e repita o processo.
 
-Você pode usar uma configuração personalizada gratuita, mais informações aqui.
+### ⚡ Alternativa mais rápida: Proton VPN
 
----
+Para uma conexão mais rápida e estável, recomendamos criar uma **conta gratuita na Proton VPN** e baixar seu próprio arquivo `.ovpn`.
+
+Isso pode ser mais rápido porque você estará utilizando uma configuração própria, evitando depender dos servidores e perfis compartilhados do VPNBook.
+
+Depois de criar sua conta, baixe a configuração `.ovpn` diretamente pela Proton VPN:
+
+[Veja como baixar uma configuração OpenVPN da Proton VPN](https://protonvpn.com/support/vpn-config-download)
+
+> 💡 **Dica:** uma configuração própria da Proton VPN pode proporcionar uma conexão mais estável e reduzir o tempo de conexão e estabilização da VPN.
 
 # 🚀 Principais recursos
 
