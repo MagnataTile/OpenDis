@@ -11,11 +11,12 @@
 <p align="center">
   Gerenciamento de perfis OpenVPN, conexão automatizada, verificação de IP e inicialização controlada do Discord.
 </p>
-
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white">
+  <img src="https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white">
   <img src="https://img.shields.io/badge/OpenVPN-Community-EA7E20?style=for-the-badge&logo=openvpn&logoColor=white">
   <img src="https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img src="https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white">
   <img src="https://img.shields.io/badge/Discord-Launcher-5865F2?style=for-the-badge&logo=discord&logoColor=white">
 </p>
 
@@ -23,7 +24,7 @@
 ## 👉 **[📥 Baixar a última versão](https://github.com/MagnataTile/OpenDis/releases)**
 ## 🛡️ Sobre
 
-**OpenDis** é uma aplicação para Windows criada para simplificar o processo de **conectar uma VPN e iniciar o Discord**.
+**OpenDis** é uma aplicação para Windows e Android criada para simplificar o processo de **conectar uma VPN e iniciar o Discord**.
 
 A proposta é simples: substituir o processo manual de abrir uma VPN, selecionar uma região, conectar à VPN, aguardar a conexão e então abrir o Discord.
 
@@ -32,7 +33,7 @@ Tudo isso é centralizado em uma única aplicação.
 O OpenDis funciona como uma **interface de automação para abrir o Discord**. 
 ### 🔐 O que o OpenDis faz
 
-- Detecta o **OpenVPN Community** e o **Discord** instalado no Windows.
+- Detecta o **OpenVPN Community** e o **Discord** instalado.
 
 - Inicia o OpenVPN automaticamente.
 - Aguarda a conexão VPN ser estabelecida.
@@ -562,7 +563,7 @@ Feche completamente o Discord antes de iniciar o OpenDis.
 
 ---
 
-# 📦 Executável
+# 📦 Versões compiladas
 
 ## 🚀 Baixar a versão mais recente
 
@@ -570,12 +571,14 @@ A maneira mais simples de utilizar o OpenDis é baixar a versão já compilada d
 
 👉 **[📥 Baixar a última versão](https://github.com/MagnataTile/OpenDis/releases)**
 
-Na página de Releases, procure pela versão mais recente e baixe o executável `.exe` ou arquivo `.zip` disponibilizado.
+Na página de Releases, procure pela versão mais recente. Cada Release disponibiliza as versões do OpenDis para as plataformas suportadas:
 
+- 🪟 **Windows:** arquivo `.exe` ou `.zip`
+- 🤖 **Android:** arquivo `.apk`
 
-> Não é necessário instalar Python, instalar as dependências ou compilar o projeto. Basta baixar a versão .exe disponível nas Releases.
+> **Windows:** não é necessário instalar Python, instalar dependências ou compilar o projeto. Basta baixar a versão `.exe` disponível.
 
-
+> **Android:** basta baixar o arquivo `.apk` e realizar a instalação no dispositivo Android.
 ---
 
 # 🛠️ Gerando seu próprio executável
