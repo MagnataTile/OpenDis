@@ -62,10 +62,11 @@ from pathlib import Path
 from urllib.request import (
     urlopen,
 )
-
+import hashlib
+import tempfile
 from html import unescape
 from urllib.request import Request
-
+from urllib.error import HTTPError, URLError
 import customtkinter as ctk
 import tkinter.messagebox as mb
 from tkinter import filedialog
@@ -76,16 +77,25 @@ from tkinter import filedialog
 # ============================================================
 
 APP_NAME = "OpenDis"
-APP_VERSION = "0.9.0"
+APP_VERSION = "1.1.0"
 WAIT_VPN_TIMEOUT = 60
 WAIT_DISCORD = 40
 DISCORD_STABILIZE_DELAY = 20
 IP_CHECK_TIMEOUT = 30
 
+
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
 
 DISCORD_WINGET_ID = "Discord.Discord"
 
+
+GITHUB_OWNER = "MagnataTile"
+GITHUB_REPO = "OpenDis"
+
+GITHUB_RELEASE_API = (
+    f"https://api.github.com/repos/"
+    f"{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+)
 # ============================================================
 # DIRETÓRIOS DO OPENDIS
 # ============================================================
@@ -1233,6 +1243,51 @@ def create_log_file():
         f"opendis_{timestamp}.log"
     )
 
+def parse_version(version):
+    """
+    Converte uma versão como:
+
+        v1.2.3
+        1.2.3
+        V1.2.3
+
+    para uma tupla comparável.
+    """
+
+    try:
+
+        version = str(version).strip().lower()
+
+        if version.startswith("v"):
+            version = version[1:]
+
+        parts = version.split(".")
+
+        numbers = []
+
+        for part in parts[:3]:
+
+            match = re.match(
+                r"\d+",
+                part
+            )
+
+            if match:
+                numbers.append(
+                    int(match.group())
+                )
+            else:
+                numbers.append(0)
+
+        while len(numbers) < 3:
+            numbers.append(0)
+
+        return tuple(numbers)
+
+    except Exception:
+
+        return (0, 0, 0)
+
 def is_running_as_admin():
     """
     Verifica se o OpenDis está executando com privilégios
@@ -1252,6 +1307,468 @@ def is_running_as_admin():
     except Exception:
         return False
 
+def check_for_update():
+    """
+    Consulta a última Release do GitHub.
+
+    Retorna:
+
+        {
+            "available": True/False,
+            "version": "...",
+            "download_url": "...",
+            "sha256": "..."
+        }
+
+    ou None em caso de erro.
+    """
+
+    try:
+
+        request = Request(
+            GITHUB_RELEASE_API,
+            headers={
+                "User-Agent": (
+                    f"{APP_NAME}/{APP_VERSION}"
+                ),
+                "Accept": (
+                    "application/vnd.github+json"
+                )
+            }
+        )
+
+        with urlopen(
+            request,
+            timeout=8
+        ) as response:
+
+            data = json.loads(
+                response.read().decode(
+                    "utf-8"
+                )
+            )
+
+        latest_version = (
+            data.get("tag_name")
+            or data.get("name")
+            or ""
+        )
+
+        latest_version = (
+            latest_version
+            .strip()
+            .lstrip("vV")
+        )
+
+        if not latest_version:
+
+            return None
+
+        current = parse_version(
+            APP_VERSION
+        )
+
+        latest = parse_version(
+            latest_version
+        )
+
+        if latest <= current:
+
+            return {
+                "available": False,
+                "version": latest_version
+            }
+
+        download_url = None
+        sha256 = None
+
+        assets = data.get(
+            "assets",
+            []
+        )
+
+        for asset in assets:
+
+            name = (
+                asset.get("name")
+                or ""
+            )
+
+            if name.lower() == "opendis_.exe":
+
+                download_url = (
+                    asset.get(
+                        "browser_download_url"
+                    )
+                )
+
+                break
+
+        # ----------------------------------------------------
+        # Procurar SHA256
+        # ----------------------------------------------------
+
+        for asset in assets:
+
+            name = (
+                asset.get("name")
+                or ""
+            ).lower()
+
+            if (
+                name.endswith(".sha256")
+                or
+                name == "sha256.txt"
+            ):
+
+                sha256_url = asset.get(
+                    "browser_download_url"
+                )
+
+                if sha256_url:
+
+                    try:
+
+                        sha_request = Request(
+                            sha256_url,
+                            headers={
+                                "User-Agent":
+                                    f"{APP_NAME}/{APP_VERSION}"
+                            }
+                        )
+
+                        with urlopen(
+                            sha_request,
+                            timeout=8
+                        ) as sha_response:
+
+                            sha_text = (
+                                sha_response
+                                .read()
+                                .decode(
+                                    "utf-8",
+                                    errors="ignore"
+                                )
+                                .strip()
+                            )
+
+                            match = re.search(
+                                r"\b[a-fA-F0-9]{64}\b",
+                                sha_text
+                            )
+
+                            if match:
+
+                                sha256 = (
+                                    match.group(0)
+                                    .lower()
+                                )
+
+                    except Exception:
+
+                        sha256 = None
+
+                break
+
+        if not download_url:
+
+            return {
+                "available": True,
+                "version": latest_version,
+                "download_url": None,
+                "sha256": None
+            }
+
+        return {
+            "available": True,
+            "version": latest_version,
+            "download_url": download_url,
+            "sha256": sha256
+        }
+
+    except (
+        HTTPError,
+        URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        Exception
+    ):
+
+        return None
+
+def download_update(
+    download_url,
+    destination,
+    expected_sha256=None
+):
+    """
+    Baixa o novo OpenDis.exe para um arquivo temporário.
+
+    Retorna True se o download e a validação forem concluídos.
+    """
+
+    try:
+
+        request = Request(
+            download_url,
+            headers={
+                "User-Agent":
+                    f"{APP_NAME}/{APP_VERSION}",
+                "Accept":
+                    "application/octet-stream"
+            }
+        )
+
+        sha256 = hashlib.sha256()
+
+        with urlopen(
+            request,
+            timeout=60
+        ) as response:
+
+            with open(
+                destination,
+                "wb"
+            ) as output:
+
+                while True:
+
+                    chunk = response.read(
+                        1024 * 1024
+                    )
+
+                    if not chunk:
+                        break
+
+                    output.write(
+                        chunk
+                    )
+
+                    sha256.update(
+                        chunk
+                    )
+
+        # ----------------------------------------------------
+        # VALIDAR SHA256 SE EXISTIR
+        # ----------------------------------------------------
+
+        if expected_sha256:
+
+            calculated = (
+                sha256.hexdigest()
+                .lower()
+            )
+
+            if calculated != (
+                expected_sha256.lower()
+            ):
+
+                try:
+                    Path(destination).unlink(
+                        missing_ok=True
+                    )
+                except Exception:
+                    pass
+
+                return False
+
+        return (
+            Path(destination).exists()
+            and
+            Path(destination).stat().st_size > 0
+        )
+
+    except Exception:
+
+        try:
+
+            Path(destination).unlink(
+                missing_ok=True
+            )
+
+        except Exception:
+            pass
+
+        return False
+
+def create_update_script(
+    current_exe,
+    new_exe
+):
+    """
+    Cria um pequeno updater temporário.
+
+    Ele:
+        1. espera o OpenDis fechar;
+        2. cria backup;
+        3. substitui o executável;
+        4. inicia o novo OpenDis;
+        5. remove os arquivos temporários.
+    """
+
+    current_exe = Path(
+        current_exe
+    ).resolve()
+
+    new_exe = Path(
+        new_exe
+    ).resolve()
+
+    updater = (
+        Path(tempfile.gettempdir())
+        /
+        f"OpenDisUpdater_{os.getpid()}.cmd"
+    )
+
+    backup_exe = (
+        current_exe.parent
+        /
+        f"{current_exe.stem}_backup.exe"
+    )
+
+    script = f'''@echo off
+setlocal
+
+timeout /t 2 /nobreak >nul
+
+:WAIT
+tasklist /FI "PID eq {os.getpid()}" | find "{os.getpid()}" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto WAIT
+)
+
+if exist "{backup_exe}" (
+    del /f /q "{backup_exe}" >nul 2>&1
+)
+
+copy /y "{current_exe}" "{backup_exe}" >nul
+
+if errorlevel 1 (
+    exit /b 1
+)
+
+copy /y "{new_exe}" "{current_exe}" >nul
+
+if errorlevel 1 (
+    copy /y "{backup_exe}" "{current_exe}" >nul
+    exit /b 1
+)
+
+start "" "{current_exe}"
+
+timeout /t 2 /nobreak >nul
+
+del /f /q "{new_exe}" >nul 2>&1
+del /f /q "{backup_exe}" >nul 2>&1
+del /f /q "%~f0" >nul 2>&1
+
+exit /b 0
+'''
+
+    updater.write_text(
+        script,
+        encoding="utf-8"
+    )
+
+    return updater
+
+def launch_update(
+    download_url,
+    expected_sha256=None
+):
+    """
+    Baixa a nova versão e prepara a substituição
+    do executável atual.
+
+    Retorna:
+        True  -> updater iniciado
+        False -> falha
+    """
+
+    try:
+
+        if not getattr(
+            sys,
+            "frozen",
+            False
+        ):
+
+            mb.showinfo(
+                "Atualização",
+                "A atualização automática funciona "
+                "somente na versão .exe."
+            )
+
+            return False
+
+        current_exe = Path(
+            sys.executable
+        ).resolve()
+
+        if not current_exe.exists():
+
+            return False
+
+        temp_dir = Path(
+            tempfile.gettempdir()
+        )
+
+        new_exe = (
+            temp_dir
+            /
+            f"OpenDis_new_{os.getpid()}.exe"
+        )
+
+        # ----------------------------------------------------
+        # DOWNLOAD
+        # ----------------------------------------------------
+
+        success = download_update(
+            download_url,
+            new_exe,
+            expected_sha256
+        )
+
+        if not success:
+
+            return False
+
+        # ----------------------------------------------------
+        # CRIAR UPDATER
+        # ----------------------------------------------------
+
+        updater = create_update_script(
+            current_exe,
+            new_exe
+        )
+
+        # ----------------------------------------------------
+        # EXECUTAR ESCONDIDO
+        # ----------------------------------------------------
+
+        subprocess.Popen(
+            [
+                "cmd.exe",
+                "/c",
+                str(updater)
+            ],
+            cwd=str(
+                current_exe.parent
+            ),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+            )
+        )
+
+        return True
+
+    except Exception:
+
+        return False
 
 def restart_as_admin():
     """
@@ -2236,7 +2753,7 @@ class OpenDisApp(ctk.CTk):
 
         self.after(
             500,
-            self.check_requirements
+            self.check_for_update_ui
         )
 
     def bring_to_front(self):
@@ -2266,6 +2783,266 @@ class OpenDisApp(ctk.CTk):
     # ========================================================
     # REQUISITOS
     # ========================================================
+
+    def check_for_update_ui(self):
+
+        self.status_label.configure(
+            text="🔄 Verificando atualizações..."
+        )
+
+        self.progress.start()
+
+        threading.Thread(
+            target=self._check_update_worker,
+            daemon=True
+        ).start()
+
+    def _check_update_worker(self):
+
+        update = check_for_update()
+
+        self.after(
+            0,
+            lambda: self._finish_update_check(
+                update
+            )
+        )
+
+    def _finish_update_check(
+            self,
+            update
+    ):
+
+        if not update:
+            self.status_label.configure(
+                text="⚠️ Não foi possível verificar atualizações"
+            )
+
+            self.progress.stop()
+
+            self.after(
+                800,
+                self.check_requirements
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # JÁ ESTÁ ATUALIZADO
+        # --------------------------------------------------------
+
+        if not update.get(
+                "available",
+                False
+        ):
+            self.status_label.configure(
+                text="✅ OpenDis atualizado"
+            )
+
+            self.progress.stop()
+
+            self.after(
+                600,
+                self.check_requirements
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # UPDATE ENCONTRADO
+        # --------------------------------------------------------
+
+        new_version = update.get(
+            "version",
+            "?"
+        )
+
+        download_url = update.get(
+            "download_url"
+        )
+
+        sha256 = update.get(
+            "sha256"
+        )
+
+        self.progress.stop()
+
+        # --------------------------------------------------------
+        # NÃO EXISTE EXE NO RELEASE
+        # --------------------------------------------------------
+
+        if not download_url:
+            self.status_label.configure(
+                text="⚠️ Atualização encontrada, "
+                     "mas o EXE não está disponível."
+            )
+
+            self.after(
+                1200,
+                self.check_requirements
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # PERGUNTAR AO USUÁRIO
+        # --------------------------------------------------------
+
+        answer = mb.askyesno(
+            "Nova atualização disponível",
+            (
+                f"Uma nova versão do OpenDis está disponível.\n\n"
+                f"Versão atual: v{APP_VERSION}\n"
+                f"Nova versão: v{new_version}\n\n"
+                f"Deseja atualizar agora?"
+            )
+        )
+
+        if not answer:
+            self.status_label.configure(
+                text="⏭️ Atualização ignorada"
+            )
+
+            self.after(
+                700,
+                self.check_requirements
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # USUÁRIO ACEITOU
+        # --------------------------------------------------------
+
+        self.status_label.configure(
+            text=f"⬇️ Baixando v{new_version}..."
+        )
+
+        self.progress.start()
+
+        threading.Thread(
+            target=self._download_update_worker,
+            args=(
+                download_url,
+                sha256,
+                new_version
+            ),
+            daemon=True
+        ).start()
+
+    def _download_update_worker(
+            self,
+            download_url,
+            sha256,
+            new_version
+    ):
+
+        try:
+
+            current_exe = Path(
+                sys.executable
+            ).resolve()
+
+            new_exe = (
+                    Path(
+                        tempfile.gettempdir()
+                    )
+                    /
+                    f"OpenDis_new_{os.getpid()}.exe"
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.status_label.configure(
+                    text=f"⬇️ Baixando v{new_version}..."
+                )
+            )
+
+            success = download_update(
+                download_url,
+                new_exe,
+                sha256
+            )
+
+            if not success:
+                self.after(
+                    0,
+                    self._update_failed
+                )
+
+                return
+
+            self.after(
+                0,
+                lambda:
+                self.status_label.configure(
+                    text="🔄 Preparando atualização..."
+                )
+            )
+
+            updater = create_update_script(
+                current_exe,
+                new_exe
+            )
+
+            subprocess.Popen(
+                [
+                    "cmd.exe",
+                    "/c",
+                    str(updater)
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW
+                )
+            )
+
+            # ----------------------------------------------------
+            # FECHAR O APP
+            # ----------------------------------------------------
+
+            self.after(
+                300,
+                self.destroy
+            )
+
+        except Exception:
+
+            self.after(
+                0,
+                self._update_failed
+            )
+
+    def _update_failed(self):
+
+        try:
+
+            self.progress.stop()
+
+        except Exception:
+            pass
+
+        self.status_label.configure(
+            text="❌ Falha ao atualizar"
+        )
+
+        mb.showerror(
+            "Atualização",
+            (
+                "Não foi possível instalar "
+                "a nova versão.\n\n"
+                "O OpenDis continuará usando "
+                "a versão atual."
+            )
+        )
+
+        self.after(
+            500,
+            self.check_requirements
+        )
 
     def check_requirements(self):
 
