@@ -1597,14 +1597,27 @@ def create_update_script(
     new_exe
 ):
     """
-    Cria um pequeno updater temporário.
+    Cria o updater temporário do OpenDis.
 
-    Ele:
-        1. espera o OpenDis fechar;
-        2. cria backup;
-        3. substitui o executável;
-        4. inicia o novo OpenDis;
-        5. remove os arquivos temporários.
+    O updater:
+        1. Aguarda o OpenDis antigo fechar.
+        2. Cria o backup.
+        3. Substitui o OpenDis.exe.
+        4. Define PYINSTALLER_RESET_ENVIRONMENT=1.
+        5. Abre o novo OpenDis.exe.
+        6. Remove os arquivos temporários.
+
+    Não utiliza:
+        - CMD
+        - find
+        - tasklist
+        - Shell.Application
+        - ShellExecute
+        - runas
+
+    O PYINSTALLER_RESET_ENVIRONMENT informa ao bootloader
+    do PyInstaller que o novo processo deve ser tratado como
+    uma nova instância da aplicação.
     """
 
     current_exe = Path(
@@ -1618,7 +1631,7 @@ def create_update_script(
     updater = (
         Path(tempfile.gettempdir())
         /
-        f"OpenDisUpdater_{os.getpid()}.cmd"
+        f"OpenDisUpdater_{os.getpid()}.vbs"
     )
 
     backup_exe = (
@@ -1627,44 +1640,284 @@ def create_update_script(
         f"{current_exe.stem}_backup.exe"
     )
 
-    script = f'''@echo off
-setlocal
+    current = str(
+        current_exe
+    ).replace(
+        '"',
+        '""'
+    )
 
-timeout /t 2 /nobreak >nul
+    new = str(
+        new_exe
+    ).replace(
+        '"',
+        '""'
+    )
 
-:WAIT
-tasklist /FI "PID eq {os.getpid()}" | find "{os.getpid()}" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto WAIT
-)
+    backup = str(
+        backup_exe
+    ).replace(
+        '"',
+        '""'
+    )
 
-if exist "{backup_exe}" (
-    del /f /q "{backup_exe}" >nul 2>&1
-)
+    updater_file = str(
+        updater
+    ).replace(
+        '"',
+        '""'
+    )
 
-copy /y "{current_exe}" "{backup_exe}" >nul
+    script = f'''Option Explicit
 
-if errorlevel 1 (
-    exit /b 1
-)
+Dim shell
+Dim fso
 
-copy /y "{new_exe}" "{current_exe}" >nul
+Dim currentExe
+Dim newExe
+Dim backupExe
+Dim updaterFile
 
-if errorlevel 1 (
-    copy /y "{backup_exe}" "{current_exe}" >nul
-    exit /b 1
-)
+Dim i
+Dim started
 
-start "" "{current_exe}"
+Set shell = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
 
-timeout /t 2 /nobreak >nul
+currentExe = "{current}"
+newExe = "{new}"
+backupExe = "{backup}"
+updaterFile = "{updater_file}"
 
-del /f /q "{new_exe}" >nul 2>&1
-del /f /q "{backup_exe}" >nul 2>&1
-del /f /q "%~f0" >nul 2>&1
+started = False
 
-exit /b 0
+' ============================================================
+' AGUARDAR O OPENDIS ANTIGO FECHAR
+' ============================================================
+
+WScript.Sleep 2500
+
+' ============================================================
+' TENTAR ATUALIZAÇÃO
+' ============================================================
+
+For i = 1 To 30
+
+    On Error Resume Next
+
+    Err.Clear
+
+    ' ========================================================
+    ' VERIFICAR SE O NOVO ARQUIVO EXISTE
+    ' ========================================================
+
+    If Not fso.FileExists(newExe) Then
+
+        WScript.Sleep 1000
+
+    Else
+
+        ' ====================================================
+        ' REMOVER BACKUP ANTIGO
+        ' ====================================================
+
+        If fso.FileExists(backupExe) Then
+
+            Err.Clear
+
+            fso.DeleteFile _
+                backupExe, _
+                True
+
+        End If
+
+        ' ====================================================
+        ' CRIAR BACKUP
+        ' ====================================================
+
+        Err.Clear
+
+        fso.CopyFile _
+            currentExe, _
+            backupExe, _
+            True
+
+        If Err.Number = 0 Then
+
+            ' =================================================
+            ' SUBSTITUIR OPENDIS.EXE
+            ' =================================================
+
+            Err.Clear
+
+            fso.CopyFile _
+                newExe, _
+                currentExe, _
+                True
+
+            If Err.Number = 0 Then
+
+                ' =============================================
+                ' VALIDAR NOVO EXECUTÁVEL
+                ' =============================================
+
+                If fso.FileExists(currentExe) Then
+
+                    If fso.GetFile(currentExe).Size > 100000 Then
+
+                        ' =====================================
+                        ' IMPORTANTE:
+                        '
+                        ' O OpenDis será iniciado com:
+                        '
+                        ' PYINSTALLER_RESET_ENVIRONMENT=1
+                        '
+                        ' Isso faz o bootloader do PyInstaller
+                        ' tratar o processo como uma nova
+                        ' instância.
+                        '
+                        ' NÃO usar runas.
+                        ' NÃO usar ShellExecute.
+                        ' NÃO usar CMD.
+                        ' =====================================
+
+                        Err.Clear
+
+                        shell.Environment("Process")("PYINSTALLER_RESET_ENVIRONMENT") = "1"
+
+                        If Err.Number = 0 Then
+
+                            ' =================================
+                            ' INICIAR NOVO OPENDIS
+                            ' =================================
+
+                            Err.Clear
+
+                            shell.Run _
+                                Chr(34) & currentExe & Chr(34), _
+                                1, _
+                                False
+
+                            If Err.Number = 0 Then
+
+                                started = True
+
+                            End If
+
+                        End If
+
+                        Err.Clear
+
+                        If started Then
+
+                            ' =================================
+                            ' O NOVO OPENDIS FOI INICIADO
+                            ' =================================
+
+                            On Error GoTo 0
+
+                            WScript.Sleep 4000
+
+                            ' =================================
+                            ' REMOVER NOVA VERSÃO TEMPORÁRIA
+                            ' =================================
+
+                            On Error Resume Next
+
+                            If fso.FileExists(newExe) Then
+
+                                fso.DeleteFile _
+                                    newExe, _
+                                    True
+
+                            End If
+
+                            ' =================================
+                            ' REMOVER BACKUP
+                            ' =================================
+
+                            If fso.FileExists(backupExe) Then
+
+                                fso.DeleteFile _
+                                    backupExe, _
+                                    True
+
+                            End If
+
+                            ' =================================
+                            ' APAGAR O PRÓPRIO VBS
+                            '
+                            ' Não aparece janela.
+                            ' =================================
+
+                            shell.Run _
+                                "wscript.exe " & _
+                                Chr(34) & _
+                                updaterFile & _
+                                Chr(34) & _
+                                " /delete", _
+                                0, _
+                                False
+
+                            WScript.Quit 0
+
+                        End If
+
+                    End If
+
+                End If
+
+            End If
+
+            ' =================================================
+            ' SE CHEGOU AQUI, FALHOU
+            ' RESTAURAR BACKUP
+            ' =================================================
+
+            Err.Clear
+
+            If fso.FileExists(backupExe) Then
+
+                fso.CopyFile _
+                    backupExe, _
+                    currentExe, _
+                    True
+
+            End If
+
+        End If
+
+    End If
+
+    On Error GoTo 0
+
+    WScript.Sleep 1000
+
+Next
+
+' ============================================================
+' FALHA DEFINITIVA
+' ============================================================
+
+On Error Resume Next
+
+If fso.FileExists(newExe) Then
+
+    fso.DeleteFile _
+        newExe, _
+        True
+
+End If
+
+If fso.FileExists(backupExe) Then
+
+    fso.DeleteFile _
+        backupExe, _
+        True
+
+End If
+
+WScript.Quit 1
 '''
 
     updater.write_text(
@@ -2937,20 +3190,73 @@ class OpenDisApp(ctk.CTk):
             sha256,
             new_version
     ):
+        """
+        Baixa e instala a nova versão.
+
+        O OpenDis não tenta substituir o próprio EXE.
+        Ele entrega a operação para um updater externo.
+        """
 
         try:
+
+            # ========================================================
+            # VERIFICAR SE ESTÁ RODANDO COMO EXE
+            # ========================================================
+
+            if not getattr(
+                    sys,
+                    "frozen",
+                    False
+            ):
+                raise RuntimeError(
+                    "A atualização automática funciona "
+                    "somente na versão .exe."
+                )
+
+            # ========================================================
+            # EXECUTÁVEL ATUAL
+            # ========================================================
 
             current_exe = Path(
                 sys.executable
             ).resolve()
 
+            if not current_exe.exists():
+                raise RuntimeError(
+                    "Não foi possível localizar "
+                    "o OpenDis.exe atual."
+                )
+
+            # ========================================================
+            # ARQUIVO TEMPORÁRIO
+            # ========================================================
+
+            temp_dir = Path(
+                tempfile.gettempdir()
+            )
+
             new_exe = (
-                    Path(
-                        tempfile.gettempdir()
-                    )
+                    temp_dir
                     /
                     f"OpenDis_new_{os.getpid()}.exe"
             )
+
+            # ========================================================
+            # LIMPAR ARQUIVO TEMPORÁRIO ANTIGO
+            # ========================================================
+
+            try:
+
+                new_exe.unlink(
+                    missing_ok=True
+                )
+
+            except Exception:
+                pass
+
+            # ========================================================
+            # DOWNLOAD
+            # ========================================================
 
             self.after(
                 0,
@@ -2967,12 +3273,28 @@ class OpenDisApp(ctk.CTk):
             )
 
             if not success:
-                self.after(
-                    0,
-                    self._update_failed
+                raise RuntimeError(
+                    "Não foi possível baixar ou validar "
+                    "a nova versão."
                 )
 
-                return
+            # ========================================================
+            # VERIFICAR TAMANHO
+            # ========================================================
+
+            if not new_exe.exists():
+                raise RuntimeError(
+                    "O arquivo da nova versão não foi encontrado."
+                )
+
+            if new_exe.stat().st_size < 100000:
+                raise RuntimeError(
+                    "O arquivo baixado parece inválido."
+                )
+
+            # ========================================================
+            # PREPARAR UPDATER
+            # ========================================================
 
             self.after(
                 0,
@@ -2987,34 +3309,73 @@ class OpenDisApp(ctk.CTk):
                 new_exe
             )
 
+            if not updater.exists():
+                raise RuntimeError(
+                    "Não foi possível criar "
+                    "o atualizador."
+                )
+
+            # ========================================================
+            # INICIAR UPDATER
+            # ========================================================
+
             subprocess.Popen(
                 [
-                    "cmd.exe",
-                    "/c",
+                    "wscript.exe",
                     str(updater)
                 ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=(
-                    subprocess.CREATE_NO_WINDOW
-                )
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
 
-            # ----------------------------------------------------
-            # FECHAR O APP
-            # ----------------------------------------------------
-
-            self.after(
-                300,
-                self.destroy
-            )
-
-        except Exception:
+            # ========================================================
+            # IMPORTANTE:
+            #
+            # Não esperar o updater.
+            # Não apagar o EXE.
+            # Não executar mais nada aqui.
+            #
+            # O updater fará:
+            #
+            #   fechar OpenDis
+            #       ↓
+            #   backup
+            #       ↓
+            #   substituir
+            #       ↓
+            #   iniciar novo OpenDis
+            # ========================================================
 
             self.after(
                 0,
-                self._update_failed
+                lambda:
+                self.status_label.configure(
+                    text="✅ Atualização preparada. Reiniciando..."
+                )
+            )
+
+            # Pequeno intervalo para garantir que o updater
+            # recebeu o comando antes de destruirmos a janela.
+
+            time.sleep(1)
+
+            self.after(
+                0,
+                self.destroy
+            )
+
+        except Exception as e:
+
+            error = str(e)
+
+            self.after(
+                0,
+                lambda msg=error:
+                self._update_failed_with_message(
+                    msg
+                )
             )
 
     def _update_failed(self):
@@ -3045,6 +3406,36 @@ class OpenDisApp(ctk.CTk):
             self.check_requirements
         )
 
+    def _update_failed_with_message(
+            self,
+            message
+    ):
+        try:
+
+            self.progress.stop()
+
+        except Exception:
+            pass
+
+        self.status_label.configure(
+            text="❌ Falha ao atualizar"
+        )
+
+        mb.showerror(
+            "Atualização",
+            (
+                "Não foi possível instalar "
+                "a nova versão.\n\n"
+                f"{message[:1000]}\n\n"
+                "O OpenDis continuará usando "
+                "a versão atual."
+            )
+        )
+
+        self.after(
+            500,
+            self.check_requirements
+        )
     def check_requirements(self):
 
         self.progress.stop()
