@@ -112,6 +112,7 @@ VPN_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
+
 # ============================================================
 # ESTADO GLOBAL
 # ============================================================
