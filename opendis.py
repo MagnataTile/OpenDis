@@ -1394,7 +1394,7 @@ def check_for_update():
                 or ""
             )
 
-            if name.lower() == "opendis_.exe":
+            if name.lower() == "opendis.exe":
 
                 download_url = (
                     asset.get(
