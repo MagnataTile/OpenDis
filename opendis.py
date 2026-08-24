@@ -57,6 +57,7 @@ import threading
 import subprocess
 import webbrowser
 import random
+import ctypes
 from pathlib import Path
 from urllib.request import (
     urlopen,
@@ -75,9 +76,10 @@ from tkinter import filedialog
 # ============================================================
 
 APP_NAME = "OpenDis"
-
+APP_VERSION = "0.9.0"
 WAIT_VPN_TIMEOUT = 60
 WAIT_DISCORD = 40
+DISCORD_STABILIZE_DELAY = 20
 IP_CHECK_TIMEOUT = 30
 
 OPENVPN_WINGET_ID = "OpenVPNTechnologies.OpenVPN"
@@ -2075,7 +2077,7 @@ class OpenDisApp(ctk.CTk):
         super().__init__()
 
         self.title(
-            "OpenDis - v1.0"
+            f"{APP_NAME} - v{APP_VERSION}"
         )
 
         self.geometry(
@@ -2237,7 +2239,30 @@ class OpenDisApp(ctk.CTk):
             self.check_requirements
         )
 
+    def bring_to_front(self):
 
+        try:
+
+            self.deiconify()
+            self.lift()
+
+            self.attributes(
+                "-topmost",
+                True
+            )
+
+            self.after(
+                150,
+                lambda: self.attributes(
+                    "-topmost",
+                    False
+                )
+            )
+
+            self.focus_force()
+
+        except Exception:
+            pass
     # ========================================================
     # REQUISITOS
     # ========================================================
@@ -3234,9 +3259,7 @@ class OpenDisApp(ctk.CTk):
 
         self.show_profile_screen()
 
-
     def show_connect_screen(self):
-
         self.clear()
 
         ctk.CTkLabel(
@@ -3248,18 +3271,19 @@ class OpenDisApp(ctk.CTk):
             ),
             text_color="#cccccc"
         ).pack(
-            pady=(55, 5)
+            pady=(45, 5)
         )
 
         ctk.CTkLabel(
             self.container,
             text=(
-                "1 - Conectar VPN\n"
-                "2 - Confirmar rede\n"
-                "3 - Abrir Discord\n"
-                "4 - Aguardar Discord\n"
-                "5 - Desconectar VPN\n"
-            ) ,
+                "Clique em Iniciar para:\n"
+                "Conectar VPN\n"
+                "Abrir Discord\n"
+                "Aguardar conexão\n"
+                "Desconectar VPN\n"
+                "Estabilizar Discord"
+            ),
             font=ctk.CTkFont(
                 size=13
             ),
@@ -3269,10 +3293,14 @@ class OpenDisApp(ctk.CTk):
             pady=(10, 20)
         )
 
+        # ========================================================
+        # LOG
+        # ========================================================
+
         self.log_text = ctk.CTkTextbox(
             self.container,
-            width=380,
-            height=150,
+            width=360,
+            height=120,
             font=ctk.CTkFont(
                 size=12
             ),
@@ -3281,7 +3309,7 @@ class OpenDisApp(ctk.CTk):
         )
 
         self.log_text.pack(
-            pady=10
+            pady=(5, 10)
         )
 
         self.log_text.insert(
@@ -3292,6 +3320,47 @@ class OpenDisApp(ctk.CTk):
         self.log_text.configure(
             state="disabled"
         )
+
+        # ========================================================
+        # PORCENTAGEM
+        # ========================================================
+
+        self.progress_label = ctk.CTkLabel(
+            self.container,
+            text="0%",
+            font=ctk.CTkFont(
+                size=13,
+                weight="bold"
+            ),
+            text_color="#cccccc"
+        )
+
+        self.progress_label.pack(
+            pady=(5, 2)
+        )
+
+        # ========================================================
+        # BARRA DE PROGRESSO
+        # ========================================================
+
+        self.progress_bar = ctk.CTkProgressBar(
+            self.container,
+            width=360,
+            height=12,
+            mode="determinate"
+        )
+
+        self.progress_bar.set(
+            0
+        )
+
+        self.progress_bar.pack(
+            pady=(0, 10)
+        )
+
+        # ========================================================
+        # BOTÃO PRINCIPAL
+        # ========================================================
 
         self.start_btn = ctk.CTkButton(
             self.container,
@@ -3308,26 +3377,13 @@ class OpenDisApp(ctk.CTk):
         )
 
         self.start_btn.pack(
-            pady=12
-        )
-        self.back_btn = ctk.CTkButton(
-            self.container,
-            text="← VOLTAR",
-            command=self.back_to_profile_screen,
-            fg_color="#4a4a5a",
-            hover_color="#383846",
-            width=180,
-            height=35,
-            font=ctk.CTkFont(
-                size=13,
-                weight="bold"
-            ),
-            corner_radius=18
+            pady=10
         )
 
-        self.back_btn.pack(
-            pady=(0, 10)
-        )
+        # ========================================================
+        # STATUS FINAL
+        # ========================================================
+
         self.final_status = ctk.CTkLabel(
             self.container,
             text="",
@@ -3340,8 +3396,129 @@ class OpenDisApp(ctk.CTk):
         self.final_status.pack(
             pady=5
         )
+        self.activity_bar = ctk.CTkProgressBar(
+            self.container,
+            width=160,
+            height=6,
+            mode="indeterminate"
+        )
+
+        self.activity_bar.pack(
+            pady=(0, 8)
+        )
 
 
+        # ========================================================
+        # ESTADO INICIAL
+        # ========================================================
+
+        self.set_progress(
+            0,
+            "Aguardando início..."
+        )
+
+    def bring_to_front(self):
+        """
+        Traz o OpenDis para frente depois que o Discord foi aberto
+        e a VPN foi desconectada.
+
+        Não recria a interface e não limpa o log.
+        """
+
+        try:
+
+            self.deiconify()
+
+            self.lift()
+
+            # Coloca temporariamente acima das outras janelas
+            self.attributes(
+                "-topmost",
+                True
+            )
+
+            self.focus_force()
+
+            # Depois remove o topmost para não deixar
+            # o OpenDis permanentemente sobre todas as janelas.
+            self.after(
+                1200,
+                lambda: self.attributes(
+                    "-topmost",
+                    False
+                )
+            )
+
+        except Exception:
+            pass
+
+    def set_progress(
+            self,
+            percent,
+            status=None
+    ):
+        """
+        Atualiza visualmente o progresso da operação.
+
+        percent:
+            0 até 100
+
+        status:
+            Texto opcional exibido abaixo/acima da barra.
+        """
+
+        try:
+
+            percent = max(
+                0,
+                min(
+                    100,
+                    int(percent)
+                )
+            )
+
+            # ----------------------------------------------------
+            # Barra
+            # ----------------------------------------------------
+
+            if hasattr(
+                    self,
+                    "progress_bar"
+            ):
+                self.progress_bar.set(
+                    percent / 100
+                )
+
+            # ----------------------------------------------------
+            # Porcentagem
+            # ----------------------------------------------------
+
+            if hasattr(
+                    self,
+                    "progress_label"
+            ):
+                self.progress_label.configure(
+                    text=f"{percent}%"
+                )
+
+            # ----------------------------------------------------
+            # Status
+            # ----------------------------------------------------
+
+            if (
+                    status
+                    and
+                    hasattr(
+                        self,
+                        "final_status"
+                    )
+            ):
+                self.final_status.configure(
+                    text=status
+                )
+
+        except Exception:
+            pass
     # ========================================================
     # LOG UI
     # ========================================================
@@ -3660,12 +3837,8 @@ class OpenDisApp(ctk.CTk):
 
         # ========================================================
         # VERIFICAÇÃO DE SEGURANÇA
-        #========================================================
-        # Impede voltar enquanto o processo está rodando
-        if hasattr(self, "back_btn"):
-            self.back_btn.configure(
-                state="disabled"
-            )
+        # ========================================================
+
         if os.name == "nt" and not is_running_as_admin():
             mb.showerror(
                 "OpenDis",
@@ -3683,7 +3856,20 @@ class OpenDisApp(ctk.CTk):
 
         self.start_btn.configure(
             state="disabled",
-            text="🔄 Executando..."
+            text="🔄 INICIANDO..."
+        )
+
+        # ========================================================
+        # PROGRESSO INICIAL
+        # ========================================================
+
+        self.set_progress(
+            5,
+            "Preparando operação..."
+        )
+
+        self.log(
+            "🚀 Iniciando procedimento..."
         )
 
         # ========================================================
@@ -3694,7 +3880,7 @@ class OpenDisApp(ctk.CTk):
             target=self._run_unlock,
             daemon=True
         ).start()
-
+        self.activity_bar.start()
 
     # ========================================================
     # EXECUÇÃO PRINCIPAL
@@ -3716,22 +3902,31 @@ class OpenDisApp(ctk.CTk):
             abrir Discord
             aguardar Discord
             desconectar VPN
-            confirmar desconexão
-            mostrar CONCLUÍDO
+            voltar para tela principal
+            aguardar estabilização do Discord
+            mostrar CONCLUIR E FECHAR
 
-        O OpenVPN é executado de forma totalmente invisível.
-        Nenhuma janela CMD é exibida.
         """
 
         vpn_connected = False
         credentials_file = None
         process = None
+        log_handle = None
+        keep_log_file = False
 
         try:
 
             # ====================================================
             # 1. LOCALIZAR OPENVPN
             # ====================================================
+
+            self.after(
+                0,
+                lambda: self.set_progress(
+                    10,
+                    "Localizando OpenVPN..."
+                )
+            )
 
             openvpn = find_openvpn_executable()
 
@@ -3752,6 +3947,14 @@ class OpenDisApp(ctk.CTk):
             # 2. LOCALIZAR DISCORD
             # ====================================================
 
+            self.after(
+                0,
+                lambda: self.set_progress(
+                    15,
+                    "Localizando Discord..."
+                )
+            )
+
             discord = find_discord_executable()
 
             if not discord:
@@ -3771,6 +3974,14 @@ class OpenDisApp(ctk.CTk):
             # 3. PERFIL OVPN
             # ====================================================
 
+            self.after(
+                0,
+                lambda: self.set_progress(
+                    20,
+                    "Validando perfil VPN..."
+                )
+            )
+
             profile = getattr(
                 self,
                 "current_profile",
@@ -3782,7 +3993,9 @@ class OpenDisApp(ctk.CTk):
                     "Nenhum perfil .ovpn selecionado."
                 )
 
-            profile = Path(profile)
+            profile = Path(
+                profile
+            )
 
             if not profile.exists():
                 raise RuntimeError(
@@ -3808,59 +4021,42 @@ class OpenDisApp(ctk.CTk):
 
             self.after(
                 0,
-                lambda:
-                self.log(
-                    "🌐 Verificando IP atual..."
+                lambda: self.set_progress(
+                    25,
+                    "Obtendo IP atual..."
                 )
             )
 
-            self.current_public_ip = get_public_ip()
+            self.current_public_ip = get_public_ip(
+                timeout=10
+            )
 
             if self.current_public_ip:
-
                 self.after(
                     0,
                     lambda ip=self.current_public_ip:
                     self.log(
-                        f"🌐 IP atual: {ip}"
-                    )
-                )
-
-            else:
-
-                self.after(
-                    0,
-                    lambda:
-                    self.log(
-                        "⚠️ Não foi possível obter IP inicial."
+                        f"🌐 IP inicial: {ip}"
                     )
                 )
 
             # ====================================================
-            # 5. CRIAR LOG
+            # 5. PREPARAÇÃO DO OPENVPN
             # ====================================================
-
-            self.vpn_log_file = create_log_file()
 
             self.after(
                 0,
-                lambda p=self.vpn_log_file:
-                self.log(
-                    f"📝 Log: {p.name}"
+                lambda: self.set_progress(
+                    30,
+                    "Preparando conexão VPN..."
                 )
             )
 
-            # ====================================================
-            # 6. CREDENCIAIS
-            # ====================================================
 
             command = [
                 openvpn,
                 "--config",
                 str(profile),
-
-                # MUITO IMPORTANTE:
-                # teu perfil funciona com DCO desativado.
                 "--disable-dco",
             ]
 
@@ -3883,12 +4079,9 @@ class OpenDisApp(ctk.CTk):
                         "Este perfil exige usuário e senha."
                     )
 
-                # ------------------------------------------------
-                # Arquivo temporário de credenciais
-                # ------------------------------------------------
-
                 credentials_file = (
-                        LOG_DIR /
+                        LOG_DIR
+                        /
                         f".credentials_{os.getpid()}_{int(time.time())}.tmp"
                 )
 
@@ -3915,18 +4108,13 @@ class OpenDisApp(ctk.CTk):
                 )
 
             # ====================================================
-            # 7. PREPARAR PROCESSO
+            # 6. PREPARAR PROCESSO
             # ====================================================
 
             creation_flags = 0
-
             startupinfo = None
 
             if os.name == "nt":
-                # -----------------------------------------------
-                # NÃO abrir janela CMD
-                # -----------------------------------------------
-
                 creation_flags = (
                         subprocess.CREATE_NO_WINDOW
                         |
@@ -3944,8 +4132,10 @@ class OpenDisApp(ctk.CTk):
                 )
 
             # ====================================================
-            # 8. ABRIR LOG
+            # 7. LOG OPENVPN
             # ====================================================
+
+            self.vpn_log_file = create_log_file()
 
             log_handle = open(
                 self.vpn_log_file,
@@ -3955,13 +4145,20 @@ class OpenDisApp(ctk.CTk):
             )
 
             # ====================================================
-            # 9. INICIAR OPENVPN
+            # 8. INICIAR OPENVPN
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.set_progress(
+                    35,
+                    "Conectando à VPN..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
                     "🔌 Iniciando OpenVPN..."
                 )
             )
@@ -3979,19 +4176,19 @@ class OpenDisApp(ctk.CTk):
             self.vpn_process = process
 
             # ====================================================
-            # 10. AGUARDAR VPN
+            # 9. AGUARDAR VPN
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.log(
                     "⏳ Aguardando conexão VPN..."
                 )
             )
 
             vpn_deadline = (
-                    time.time() +
+                    time.time()
+                    +
                     WAIT_VPN_TIMEOUT
             )
 
@@ -3999,18 +4196,12 @@ class OpenDisApp(ctk.CTk):
 
             while time.time() < vpn_deadline:
 
-                # -----------------------------------------------
-                # Processo morreu?
-                # -----------------------------------------------
-
                 if process.poll() is not None:
                     raise RuntimeError(
-                        "OpenVPN encerrou antes de concluir a conexão."
+                        "OpenVPN encerrou antes de concluir a conexão.\n"
+                        "Feche o programa e abra novamente..\n\n"
+                        "Considere reiniciar o OpenVPN ou o Computador\n\n"
                     )
-
-                # -----------------------------------------------
-                # Ler log
-                # -----------------------------------------------
 
                 try:
 
@@ -4024,47 +4215,109 @@ class OpenDisApp(ctk.CTk):
                         log_content = f.read()
 
                 except Exception:
-                    log_content = ""
 
-                # -----------------------------------------------
-                # Conexão estabelecida
-                # -----------------------------------------------
+                    log_content = ""
 
                 if (
                         "Initialization Sequence Completed"
                         in log_content
                 ):
                     connection_confirmed = True
+
                     break
 
-                # -----------------------------------------------
-                # Erros fatais conhecidos
-                # -----------------------------------------------
+                fatal_patterns = {
+                    "Exiting due to fatal error": (
+                        "Erro inesperado na conexão VPN.\n"
+                        "O OpenVPN encontrou um problema e não conseguiu iniciar a conexão."
+                    ),
 
-                fatal_patterns = [
-                    "Exiting due to fatal error",
-                    "AUTH_FAILED",
-                    "TLS Error",
-                    "Cannot open TUN/TAP",
-                    "All TAP-Windows adapters",
-                    "Options error:",
-                    "Connection failed",
-                ]
+                    "AUTH_FAILED": (
+                        "Usuário ou senha incorretos.\n"
+                        "Verifique suas credenciais da VPN e tente novamente."
+                    ),
+
+                    "TLS Error": (
+                        "Não foi possível estabelecer comunicação segura com o servidor VPN.\n"
+                        "Tente outro servidor ou perfil .ovpn."
+                    ),
+
+                    "Cannot open TUN/TAP": (
+                        "O adaptador de rede da VPN não pôde ser iniciado.\n"
+                        "Verifique a instalação do OpenVPN e tente novamente."
+                    ),
+
+                    "All TAP-Windows adapters": (
+                        "Nenhum adaptador de rede VPN está disponível.\n"
+                        "Reinstale ou repare o OpenVPN."
+                    ),
+
+                    "Options error:": (
+                        "O perfil VPN possui uma configuração inválida ou incompatível.\n"
+                        "Verifique o arquivo .ovpn selecionado."
+                    ),
+
+                    "Connection failed": (
+                        "Não foi possível conectar ao servidor VPN.\n"
+                        "O servidor pode estar indisponível ou o perfil pode estar com problema."
+                    ),
+                }
 
                 fatal_error = None
+                user_error = None
 
-                for pattern in fatal_patterns:
+                for pattern, message in fatal_patterns.items():
 
                     if pattern.lower() in log_content.lower():
                         fatal_error = pattern
+                        user_error = message
+
                         break
+
+                if fatal_error:
+                    raise RuntimeError(
+                        user_error
+                    )
 
                 if fatal_error:
                     raise RuntimeError(
                         f"OpenVPN falhou: {fatal_error}"
                     )
 
-                time.sleep(0.25)
+                # progresso visual durante a conexão
+                elapsed = (
+                        WAIT_VPN_TIMEOUT
+                        -
+                        max(
+                            0,
+                            vpn_deadline - time.time()
+                        )
+                )
+
+                progress = int(
+                    35
+                    +
+                    (
+                            elapsed
+                            /
+                            WAIT_VPN_TIMEOUT
+                    )
+                    *
+                    20
+                )
+
+                self.after(
+                    0,
+                    lambda p=progress:
+                    self.set_progress(
+                        p,
+                        "Estabelecendo túnel VPN..."
+                    )
+                )
+
+                time.sleep(
+                    0.25
+                )
 
             if not connection_confirmed:
                 raise RuntimeError(
@@ -4072,27 +4325,41 @@ class OpenDisApp(ctk.CTk):
                 )
 
             # ====================================================
-            # 11. VPN CONECTADA
+            # 10. VPN CONECTADA
             # ====================================================
 
             vpn_connected = True
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.set_progress(
+                    55,
+                    "VPN conectada."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
                     "✅ OpenVPN conectado."
                 )
             )
 
             # ====================================================
-            # 12. CONFIRMAR MUDANÇA DE IP
+            # 11. CONFIRMAR IP
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.set_progress(
+                    60,
+                    "Confirmando alteração de rede..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
                     "🌐 Confirmando alteração de rede..."
                 )
             )
@@ -4100,7 +4367,8 @@ class OpenDisApp(ctk.CTk):
             new_ip = None
 
             ip_deadline = (
-                    time.time() +
+                    time.time()
+                    +
                     IP_CHECK_TIMEOUT
             )
 
@@ -4125,7 +4393,9 @@ class OpenDisApp(ctk.CTk):
                     ):
                         break
 
-                time.sleep(1)
+                time.sleep(
+                    1
+                )
 
             if new_ip:
 
@@ -4137,53 +4407,42 @@ class OpenDisApp(ctk.CTk):
                     )
                 )
 
-                if (
-                        self.current_public_ip
-                        and
-                        new_ip == self.current_public_ip
-                ):
-
-                    self.after(
-                        0,
-                        lambda:
-                        self.log(
-                            "⚠️ IP não mudou, mas o túnel VPN está ativo."
-                        )
+                self.after(
+                    0,
+                    lambda: self.log(
+                        "✅ Rede VPN confirmada."
                     )
-
-                else:
-
-                    self.after(
-                        0,
-                        lambda:
-                        self.log(
-                            "✅ Rede VPN confirmada."
-                        )
-                    )
+                )
 
             else:
 
                 self.after(
                     0,
-                    lambda:
-                    self.log(
+                    lambda: self.log(
                         "⚠️ Não foi possível confirmar o IP externo."
                     )
                 )
 
             # ====================================================
-            # 13. ABRIR DISCORD
+            # 12. ABRIR DISCORD
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.set_progress(
+                    70,
+                    "Abrindo Discord..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
                     "💬 Abrindo Discord..."
                 )
             )
 
-            discord_process = subprocess.Popen(
+            subprocess.Popen(
                 [discord],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -4196,11 +4455,12 @@ class OpenDisApp(ctk.CTk):
             )
 
             # ====================================================
-            # 14. CONFIRMAR DISCORD
+            # 13. CONFIRMAR DISCORD
             # ====================================================
 
             discord_deadline = (
-                    time.time() +
+                    time.time()
+                    +
                     20
             )
 
@@ -4208,35 +4468,14 @@ class OpenDisApp(ctk.CTk):
 
             while time.time() < discord_deadline:
 
-                try:
+                if discord_process_running():
+                    discord_found = True
 
-                    result = subprocess.run(
-                        [
-                            "tasklist",
-                            "/FI",
-                            "IMAGENAME eq Discord.exe"
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        creationflags=(
-                            subprocess.CREATE_NO_WINDOW
-                            if os.name == "nt"
-                            else 0
-                        )
-                    )
+                    break
 
-                    if (
-                            "Discord.exe"
-                            in result.stdout
-                    ):
-                        discord_found = True
-                        break
-
-                except Exception:
-                    pass
-
-                time.sleep(0.5)
+                time.sleep(
+                    0.5
+                )
 
             if not discord_found:
                 raise RuntimeError(
@@ -4245,63 +4484,282 @@ class OpenDisApp(ctk.CTk):
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.set_progress(
+                    75,
+                    "Discord iniciado."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
                     "✅ Discord aberto."
                 )
             )
 
             # ====================================================
-            # 15. ESPERAR 60 SEGUNDOS
+            # 14. MANTER VPN / ESTABILIZAR DISCORD
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
-                    "⏳ Aguardando Discord estabilizar ..."
+                lambda: self.log(
+                    "⏳ Aguardando Discord estabilizar..."
                 )
             )
 
-            time.sleep(
-                WAIT_DISCORD
-            )
+            countdown_start = time.time()
+
+            for remaining in range(
+                    WAIT_DISCORD,
+                    -1,
+                    -1
+            ):
+
+                elapsed = int(
+                    time.time() - countdown_start
+                )
+
+                # ------------------------------------------------
+                # TRAZER OPENDIS PARA FRENTE
+                # 40s / 20s / 0s restantes
+                # ------------------------------------------------
+
+                if remaining in {37, 29, 21, 14, 7, 4, 0}:
+                    self.after(
+                        0,
+                        self.bring_to_front
+                    )
+
+                # ------------------------------------------------
+                # LOG
+                # ------------------------------------------------
+
+                self.after(
+                    0,
+                    lambda s=remaining:
+                    self.log(
+                        f"⏳ Mantendo VPN por mais {s}s..."
+                    )
+                )
+
+                # ------------------------------------------------
+                # PROGRESSO
+                # ------------------------------------------------
+
+                elapsed = (
+                        WAIT_DISCORD - remaining
+                )
+
+                progress = (
+                        75
+                        +
+                        (
+                                elapsed
+                                /
+                                WAIT_DISCORD
+                        )
+                        * 10
+                )
+
+                self.after(
+                    0,
+                    lambda p=progress:
+                    self.set_progress(
+                        p,
+                        "Mantendo VPN..."
+                    )
+                )
+
+                if remaining > 0:
+                    time.sleep(1)
 
             # ====================================================
-            # 16. DESCONECTAR VPN
+            # 14. DESCONECTAR VPN
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
-                    "🔌 Desconectando VPN..."
+                lambda: self.set_progress(
+                    85,
+                    "Desconectando VPN..."
                 )
             )
 
-            disconnected = self.disconnect_vpn()
+            self.after(
+                0,
+                lambda: self.log(
+                    "🔓 Desconectando VPN..."
+                )
+            )
+
+            self.disconnect_vpn()
 
             vpn_connected = False
 
-            if not disconnected:
-                raise RuntimeError(
-                    "Não foi possível confirmar a desconexão da VPN."
-                )
-
             # ====================================================
-            # 17. CONFIRMAÇÃO
+            # 15. CONFIRMAR DESCONEXÃO
             # ====================================================
 
             self.after(
                 0,
-                lambda:
-                self.log(
+                lambda: self.log(
+                    "🔍 Confirmando desconexão..."
+                )
+            )
+
+            time.sleep(3)
+
+            if (
+                    self.vpn_process
+                    and
+                    self.vpn_process.poll() is None
+            ):
+                self.after(
+                    0,
+                    lambda: self.log(
+                        "⚠️ VPN ainda ativa. Forçando encerramento..."
+                    )
+                )
+
+                self.disconnect_vpn()
+
+            self.after(
+                0,
+                lambda: self.log(
                     "✅ VPN desconectada."
                 )
             )
 
+
+
             # ====================================================
-            # 18. FINAL
+            # TRAZER OPENDIS PARA FRENTE
+            # ====================================================
+
+            self.after(
+                0,
+                self.bring_to_front
+            )
+
+            time.sleep(
+                0.5
+            )
+
+            # ====================================================
+            # ESTABILIZAÇÃO DO DISCORD
+            # ====================================================
+
+            self.after(
+                0,
+                lambda: self.start_btn.configure(
+                    state="disabled",
+                    text="🔄 ESTABILIZANDO DISCORD..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
+                    "ℹ️ Seu Discord pode demorar um pouco para estabelecer a conexão novamente."
+                )
+            )
+
+            self.after(
+                0,
+                lambda: self.log(
+                    "⏳ Aguarde; se necessário, espere alguns instantes."
+                )
+            )
+
+            # ====================================================
+            # TEMPO EXTRA
+            # ====================================================
+
+            for elapsed in range(
+                    DISCORD_STABILIZE_DELAY + 1
+            ):
+
+                remaining = (
+                        DISCORD_STABILIZE_DELAY
+                        -
+                        elapsed
+                )
+
+                progress = int(
+                    85
+                    +
+                    (
+                            elapsed
+                            /
+                            DISCORD_STABILIZE_DELAY
+                    )
+                    *
+                    15
+                )
+
+                # ------------------------------------------------
+                # STATUS + PORCENTAGEM
+                # ------------------------------------------------
+
+                if remaining > 0:
+
+                    status = (
+                        f"Estabilizando a Conexão... {remaining}s"
+                    )
+
+                else:
+
+                    status = (
+                        "Discord estabilizado."
+                    )
+
+                self.after(
+                    0,
+                    lambda p=progress,
+                           s=status:
+                    self.set_progress(
+                        p,
+                        s
+                    )
+                )
+
+                # ------------------------------------------------
+                # LOG
+                # ------------------------------------------------
+
+                if remaining > 0:
+
+                    self.after(
+                        0,
+                        lambda r=remaining:
+                        self.log(
+                            f"⏳ Estabilizando a Conexão... {r}s"
+                        )
+                    )
+
+                else:
+
+                    self.after(
+                        0,
+                        lambda:
+                        self.log(
+                            "✅ Discord estabilizado."
+                        )
+                    )
+
+                    self.after(
+                        0,
+                        self.activity_bar.stop
+                    )
+
+                if remaining > 0:
+                    time.sleep(
+                        1
+                    )
+
+            # ====================================================
+            # FINAL
             # ====================================================
 
             self.after(
@@ -4312,67 +4770,153 @@ class OpenDisApp(ctk.CTk):
 
         except Exception as e:
 
+            # ====================================================
+
+            # ERRO → MANTER LOG PARA DIAGNÓSTICO
+
+            # ====================================================
+
+            keep_log_file = True
+
             error_text = str(e)
 
             self.after(
+
                 0,
+
                 lambda msg=error_text:
+
                 self.log(
+
                     f"❌ {msg[:300]}"
+
                 )
+
             )
 
-            # ----------------------------------------------------
-            # SEMPRE limpar VPN
-            # ----------------------------------------------------
+            # ====================================================
 
-            if vpn_connected or getattr(
-                    self,
-                    "vpn_process",
-                    None
+            # SEMPRE LIMPAR VPN
+
+            # ====================================================
+
+            if (
+
+                    vpn_connected
+
+                    or
+
+                    getattr(
+
+                        self,
+
+                        "vpn_process",
+
+                        None
+
+                    )
+
             ):
 
                 self.after(
+
                     0,
-                    lambda:
-                    self.log(
+
+                    lambda: self.log(
+
                         "🛑 Limpando conexão VPN..."
+
                     )
+
                 )
 
                 try:
+
                     self.disconnect_vpn()
+
+
                 except Exception:
+
                     pass
 
             self.after(
+
                 0,
+
                 lambda msg=error_text:
+
                 mb.showerror(
+
                     "OpenDis",
+
                     f"Ocorreu um erro:\n\n{msg[:1000]}"
+
                 )
+
             )
 
             self.after(
+
                 0,
+
                 self.reset_start_button
+
             )
 
 
         finally:
 
             # ====================================================
-            # FECHAR HANDLE DO LOG
+
+            # FECHAR LOG
+
             # ====================================================
 
             try:
-                log_handle.close()
+
+                if log_handle:
+                    log_handle.flush()
+
+                    log_handle.close()
+
+
             except Exception:
+
                 pass
 
             # ====================================================
+
+            # APAGAR LOG SE NÃO HOUVE ERRO
+
+            # ====================================================
+
+            if (
+
+                    not keep_log_file
+
+                    and
+
+                    self.vpn_log_file
+
+            ):
+
+                try:
+
+                    self.vpn_log_file.unlink(
+
+                        missing_ok=True
+
+                    )
+
+
+                except Exception:
+
+                    pass
+
+            # ====================================================
+
             # APAGAR CREDENCIAL TEMPORÁRIA
+
             # ====================================================
 
             if credentials_file:
@@ -4380,10 +4924,14 @@ class OpenDisApp(ctk.CTk):
                 try:
 
                     credentials_file.unlink(
+
                         missing_ok=True
+
                     )
 
+
                 except Exception:
+
                     pass
 
                 credentials_file = None
@@ -4431,12 +4979,6 @@ class OpenDisApp(ctk.CTk):
         if os.name == "nt":
 
             try:
-
-                # O processo foi criado com
-                # CREATE_NEW_PROCESS_GROUP.
-                #
-                # CTRL_BREAK permite que o OpenVPN faça seu
-                # encerramento normal e remova TAP/DCO/WFP.
 
                 process.send_signal(
                     signal.CTRL_BREAK_EVENT
@@ -4544,18 +5086,23 @@ class OpenDisApp(ctk.CTk):
 
     def show_completed(self):
 
+        self.set_progress(
+            100,
+            "Discord estabilizado. Tudo pronto!"
+        )
+
         self.log(
             "🎉 Operação concluída com sucesso!"
         )
 
         self.final_status.configure(
-            text="✅ CONCLUÍDO",
+            text="✅ Discord Aberto!",
             text_color="#57F287"
         )
 
         self.start_btn.configure(
             state="normal",
-            text="✓ CONCLUÍDO",
+            text="✓ CONCLUIR E FECHAR",
             fg_color="#3ba55d",
             hover_color="#2d7d46",
             command=self.destroy
@@ -4607,17 +5154,8 @@ if __name__ == "__main__":
 
             sys.exit(1)
 
-        # ----------------------------------------------------
-        # A nova instância elevada foi iniciada.
-        #
-        # Esta instância NÃO deve criar a GUI.
-        # ----------------------------------------------------
 
         sys.exit(0)
-
-    # ========================================================
-    # JÁ ESTÁ ELEVADO
-    # ========================================================
 
     app = OpenDisApp()
 
