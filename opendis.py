@@ -58,15 +58,16 @@ import subprocess
 import webbrowser
 import random
 import ctypes
-from pathlib import Path
-from urllib.request import (
-    urlopen,
-)
+import shutil
+import zipfile
 import hashlib
 import tempfile
+from pathlib import Path
+from ctypes import wintypes
 from html import unescape
-from urllib.request import Request
+from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
+
 import customtkinter as ctk
 import tkinter.messagebox as mb
 from tkinter import filedialog
@@ -77,10 +78,10 @@ from tkinter import filedialog
 # ============================================================
 
 APP_NAME = "OpenDis"
-APP_VERSION = "1.1.0"
+APP_VERSION = "2.0.0"
 WAIT_VPN_TIMEOUT = 60
-WAIT_DISCORD = 40
-DISCORD_STABILIZE_DELAY = 20
+WAIT_DISCORD = 15
+WAIT_OPENDIS_FOCUS = 15
 IP_CHECK_TIMEOUT = 30
 
 
@@ -165,7 +166,6 @@ VPNBOOK_SERVERS = [
 VPNBOOK_SELECTED = random.choice(VPNBOOK_SERVERS)
 
 VPNBOOK_DEFAULT_SERVER = VPNBOOK_SELECTED["server"]
-VPNBOOK_DEFAULT_SERVER_NAME = VPNBOOK_SELECTED["name"]
 VPNBOOK_DEFAULT_PROTOCOL = VPNBOOK_SELECTED["protocol"]
 
 VPNBOOK_DIR = VPN_DIR / "VPNBook"
@@ -211,6 +211,10 @@ def run_command(
             stderr = str(e)
 
         return Result()
+
+# ============================================================
+# DISCORD / APP VPN
+# ============================================================
 
 
 # ============================================================
@@ -502,16 +506,6 @@ def find_discord_executable():
 # VERIFICAÇÕES
 # ============================================================
 
-def is_openvpn_installed():
-
-    return find_openvpn_executable() is not None
-
-
-def is_discord_installed():
-
-    return find_discord_executable() is not None
-
-
 # ============================================================
 # INSTALAÇÃO AUTOMÁTICA
 # ============================================================
@@ -725,50 +719,9 @@ def profile_requires_credentials(profile_path):
         return False
 
 
-def get_credentials_file(profile_path):
-
-    """
-    Retorna caminho de arquivo de credenciais
-    caso o .ovpn especifique um.
-    """
-
-    try:
-
-        text = profile_path.read_text(
-            encoding="utf-8",
-            errors="ignore"
-        )
-
-        for line in text.splitlines():
-
-            line = line.strip()
-
-            if line.lower().startswith(
-                "auth-user-pass"
-            ):
-
-                parts = line.split()
-
-                if len(parts) >= 2:
-
-                    return (
-                        profile_path.parent /
-                        parts[1]
-                    )
-
-    except Exception:
-        pass
-
-    return None
-
 # ============================================================
 # CREDENCIAIS SALVAS
 # ============================================================
-
-import base64
-import hashlib
-import ctypes
-from ctypes import wintypes
 
 
 CREDENTIALS_DIR = (
@@ -1210,39 +1163,9 @@ def get_public_ip(timeout=10):
 # VERIFICAR DISCORD
 # ============================================================
 
-def discord_process_running():
-
-    result = run_command(
-        [
-            "tasklist",
-            "/FI",
-            "IMAGENAME eq Discord.exe"
-        ],
-        timeout=10
-    )
-
-    output = (
-        result.stdout or ""
-    ).lower()
-
-    return (
-        "discord.exe" in output
-    )
-
-
 # ============================================================
 # LOG
 # ============================================================
-
-def create_log_file():
-
-    timestamp = time.strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    return LOG_DIR / (
-        f"opendis_{timestamp}.log"
-    )
 
 def parse_version(version):
     """
@@ -1927,103 +1850,6 @@ WScript.Quit 1
 
     return updater
 
-def launch_update(
-    download_url,
-    expected_sha256=None
-):
-    """
-    Baixa a nova versão e prepara a substituição
-    do executável atual.
-
-    Retorna:
-        True  -> updater iniciado
-        False -> falha
-    """
-
-    try:
-
-        if not getattr(
-            sys,
-            "frozen",
-            False
-        ):
-
-            mb.showinfo(
-                "Atualização",
-                "A atualização automática funciona "
-                "somente na versão .exe."
-            )
-
-            return False
-
-        current_exe = Path(
-            sys.executable
-        ).resolve()
-
-        if not current_exe.exists():
-
-            return False
-
-        temp_dir = Path(
-            tempfile.gettempdir()
-        )
-
-        new_exe = (
-            temp_dir
-            /
-            f"OpenDis_new_{os.getpid()}.exe"
-        )
-
-        # ----------------------------------------------------
-        # DOWNLOAD
-        # ----------------------------------------------------
-
-        success = download_update(
-            download_url,
-            new_exe,
-            expected_sha256
-        )
-
-        if not success:
-
-            return False
-
-        # ----------------------------------------------------
-        # CRIAR UPDATER
-        # ----------------------------------------------------
-
-        updater = create_update_script(
-            current_exe,
-            new_exe
-        )
-
-        # ----------------------------------------------------
-        # EXECUTAR ESCONDIDO
-        # ----------------------------------------------------
-
-        subprocess.Popen(
-            [
-                "cmd.exe",
-                "/c",
-                str(updater)
-            ],
-            cwd=str(
-                current_exe.parent
-            ),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=(
-                subprocess.CREATE_NO_WINDOW
-            )
-        )
-
-        return True
-
-    except Exception:
-
-        return False
-
 def restart_as_admin():
     """
     Reinicia o OpenDis com privilégios administrativos.
@@ -2133,25 +1959,6 @@ def restart_as_admin():
 
     except Exception:
         return False
-
-def ensure_admin():
-    """
-    Garante que o OpenDis esteja executando como administrador
-    antes de criar a interface gráfica.
-
-    Retorna:
-
-        True  -> já é administrador
-        False -> elevação falhou ou foi cancelada
-    """
-
-    if os.name != "nt":
-        return True
-
-    if is_running_as_admin():
-        return True
-
-    return restart_as_admin()
 
 # ============================================================
 # VPNBOOK
@@ -2380,9 +2187,11 @@ def vpnbook_find_profile(
     # Compatibilidade com arquivos antigos
     # --------------------------------------------------------
 
+    short_server = server.split(".", 1)[0]
+
     candidates = [
         f"*{server}*{protocol}*.ovpn",
-        f"*us16*{protocol}*.ovpn",
+        f"*{short_server}*{protocol}*.ovpn",
     ]
 
     for pattern in candidates:
@@ -2707,135 +2516,2587 @@ def vpnbook_download_profile(
 
     return destination
 
-def vpnbook_get_saved_profiles():
-    """
-    Retorna perfis VPNBook salvos.
+# ============================================================
+# PING
+# ============================================================
 
-    O perfil padrão utilizado pela VPN aleatória
-    é US Server 1 / TCP 443.
+def ping_vpn_server(server, timeout=1000):
+    """
+    Mede o ping atual do servidor VPNBook usando ICMP.
+
+    Retorna:
+        int  -> ping em ms
+        None -> servidor sem resposta
     """
 
-    VPNBOOK_DIR.mkdir(
+    if os.name != "nt":
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "ping",
+                "-n",
+                "1",
+                "-w",
+                str(timeout),
+                server
+            ],
+            capture_output=True,
+            text=True,
+            timeout=(timeout / 1000) + 2,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        if result.returncode != 0:
+            return None
+
+        output = result.stdout
+
+        match = re.search(
+            r"(?:tempo|time)[=<]\s*(\d+)\s*ms",
+            output,
+            re.IGNORECASE
+        )
+
+        if not match:
+            match = re.search(
+                r"(\d+)\s*ms",
+                output,
+                re.IGNORECASE
+            )
+
+        if not match:
+            return None
+
+        return int(match.group(1))
+
+    except Exception:
+        return None
+
+def ping_status(ping):
+    """
+    Retorna:
+        bolinha
+        cor
+    """
+
+    if ping is None:
+        return "●", "#ed4245"
+
+    if ping <= 300:
+        return "●", "#57F287"
+
+    if ping <= 500:
+        return "●", "#FFA500"
+
+    return "●", "#ED4245"
+
+
+# ============================================================
+# DISCORD - PROCESSOS
+# ============================================================
+
+def get_discord_pids():
+    """
+    Retorna todos os PIDs atualmente pertencentes ao Discord.exe.
+
+    Usa o PowerShell nativo do Windows para obter os processos.
+    Não depende de biblioteca externa.
+
+    Retorno:
+        list[int]
+    """
+
+    if os.name != "nt":
+        return []
+
+    try:
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            (
+                "Get-Process -Name Discord -ErrorAction SilentlyContinue "
+                "| Select-Object -ExpandProperty Id"
+            )
+        ]
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        if result.returncode != 0:
+            return []
+
+        pids = set()
+
+        for line in (
+            result.stdout or ""
+        ).splitlines():
+
+            line = line.strip()
+
+            if not line:
+                continue
+
+            try:
+                pid = int(line)
+
+                if pid > 0:
+                    pids.add(pid)
+
+            except ValueError:
+                continue
+
+        return sorted(pids)
+
+    except Exception:
+        return []
+
+
+def discord_process_running():
+    """
+    Retorna True quando existir pelo menos um Discord.exe ativo.
+    """
+
+    return bool(
+        get_discord_pids()
+    )
+
+
+def get_process_name(pid):
+    """
+    Retorna o nome do executável de um PID.
+
+    Retorna None se o processo não existir
+    ou não puder ser consultado.
+    """
+
+    if os.name != "nt":
+        return None
+
+    try:
+
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            (
+                f"(Get-Process -Id {int(pid)} "
+                f"-ErrorAction SilentlyContinue).ProcessName"
+            )
+        ]
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        name = (
+            result.stdout or ""
+        ).strip()
+
+        if not name:
+            return None
+
+        return f"{name}.exe"
+
+    except Exception:
+        return None
+
+
+# ============================================================
+# DISCORD APP-VPN
+# ============================================================
+
+SINGBOX_VERSION = "1.14.0"
+
+SINGBOX_DIR = (
+    Path(os.environ.get("APPDATA", str(BASE_DIR)))
+    / APP_NAME
+    / "sing-box"
+)
+
+SINGBOX_EXECUTABLE = (
+    SINGBOX_DIR
+    / "sing-box.exe"
+)
+
+SINGBOX_CONFIG_FILE = (
+    SINGBOX_DIR
+    / "opendis-discord.json"
+)
+
+SINGBOX_LOG_FILE = (
+    LOG_DIR
+    / "sing-box.log"
+)
+
+def find_singbox_executable():
+    """
+    Localiza o sing-box utilizado pelo App-VPN.
+
+    Ordem:
+        1. instalação privada do OpenDis
+        2. diretório do OpenDis
+        3. PATH
+    """
+
+    candidates = [
+        SINGBOX_EXECUTABLE,
+        BASE_DIR / "sing-box.exe",
+        BASE_DIR / "bin" / "sing-box.exe",
+        BASE_DIR / "tools" / "sing-box.exe",
+    ]
+
+    for candidate in candidates:
+
+        try:
+
+            candidate = Path(candidate)
+
+            if (
+                candidate.exists()
+                and
+                candidate.is_file()
+            ):
+                return candidate.resolve()
+
+        except Exception:
+            continue
+
+    path = shutil.which(
+        "sing-box.exe"
+    )
+
+    if path:
+
+        return Path(
+            path
+        ).resolve()
+
+    return None
+
+
+def install_singbox():
+    """
+    Instala uma cópia privada do sing-box 1.14.0
+    dentro do AppData do OpenDis.
+
+    Não altera PATH.
+    Não instala serviço.
+    Não abre CMD.
+    """
+
+    if os.name != "nt":
+
+        raise RuntimeError(
+            "O App-VPN do OpenDis suporta somente Windows."
+        )
+
+    existing = find_singbox_executable()
+
+    if existing:
+        return existing
+
+    SINGBOX_DIR.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    return sorted(
-        VPNBOOK_DIR.glob(
-            "*.ovpn"
-        ),
-        key=lambda p: p.name.lower()
-    )
-def vpnbook_get_random_profile(
-    use_saved=True
-):
-    """
-    Obtém o perfil VPNBook utilizado pelo botão
-    "VPN ALEATÓRIA".
-
-    Atualmente o padrão é:
-
-        US Server 1
-        us16.vpnbook.com
-        TCP 443
-
-    Fluxo:
-
-        1. Obtém credenciais atuais
-        2. Procura perfil salvo
-        3. Se existir, reutiliza
-        4. Caso contrário, chama a API
-        5. Salva o .ovpn
-        6. Retorna perfil + credenciais
-
-    Retorna:
-
-        (
-            profile_path,
-            username,
-            password
+    architecture = (
+        os.environ
+        .get(
+            "PROCESSOR_ARCHITECTURE",
+            "AMD64"
         )
-    """
-
-    # ========================================================
-    # 1. CREDENCIAIS
-    # ========================================================
-
-    username, password = (
-        vpnbook_get_credentials()
+        .upper()
     )
 
-    if not username or not password:
+    if architecture in {
+        "ARM64",
+    }:
 
-        raise RuntimeError(
-            "Não foi possível obter as "
-            "credenciais atuais do VPNBook."
+        asset_arch = "arm64"
+
+    else:
+
+        asset_arch = "amd64"
+
+    filename = (
+        f"sing-box-"
+        f"{SINGBOX_VERSION}-"
+        f"windows-"
+        f"{asset_arch}.zip"
+    )
+
+    url = (
+        "https://github.com/"
+        "SagerNet/sing-box/releases/download/"
+        f"v{SINGBOX_VERSION}/"
+        f"{filename}"
+    )
+
+    temp_zip = (
+        Path(tempfile.gettempdir())
+        /
+        f"OpenDis_singbox_{os.getpid()}.zip"
+    )
+
+    extract_dir = (
+        Path(tempfile.gettempdir())
+        /
+        f"OpenDis_singbox_{os.getpid()}"
+    )
+
+    try:
+
+        temp_zip.unlink(
+            missing_ok=True
         )
 
-    # ========================================================
-    # 2. PERFIL SALVO
-    # ========================================================
+    except Exception:
+        pass
 
-    if use_saved:
+    try:
 
-        saved = vpnbook_find_profile(
-            VPNBOOK_DEFAULT_SERVER,
-            VPNBOOK_DEFAULT_PROTOCOL
-        )
+        if extract_dir.exists():
 
-        if saved:
-
-            return (
-                saved,
-                username,
-                password
+            shutil.rmtree(
+                extract_dir,
+                ignore_errors=True
             )
 
-    # ========================================================
-    # 3. BAIXAR VIA API
-    # ========================================================
+    except Exception:
+        pass
 
-    profile = vpnbook_download_profile(
-        server=VPNBOOK_DEFAULT_SERVER,
-        protocol=VPNBOOK_DEFAULT_PROTOCOL
-    )
+    try:
 
-    if not profile:
-
-        raise RuntimeError(
-            "VPNBook não retornou um perfil .ovpn."
+        request = Request(
+            url,
+            headers={
+                "User-Agent":
+                    f"{APP_NAME}/{APP_VERSION}"
+            }
         )
 
-    # ========================================================
-    # 4. RETORNAR
-    # ========================================================
+        with urlopen(
+            request,
+            timeout=60
+        ) as response:
 
-    return (
-        profile,
-        username,
-        password
-    )
-def vpnbook_get_random_saved_profile():
+            with open(
+                temp_zip,
+                "wb"
+            ) as output:
+
+                while True:
+
+                    chunk = response.read(
+                        1024 * 1024
+                    )
+
+                    if not chunk:
+                        break
+
+                    output.write(
+                        chunk
+                    )
+
+        if (
+            not temp_zip.exists()
+            or
+            temp_zip.stat().st_size < 1000000
+        ):
+
+            raise RuntimeError(
+                "O arquivo do sing-box baixado "
+                "parece inválido."
+            )
+
+        extract_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        with zipfile.ZipFile(
+            temp_zip,
+            "r"
+        ) as archive:
+
+            archive.extractall(
+                extract_dir
+            )
+
+        found = None
+
+        for root, dirs, files in os.walk(
+            extract_dir
+        ):
+
+            for filename_found in files:
+
+                if (
+                    filename_found.lower()
+                    ==
+                    "sing-box.exe"
+                ):
+
+                    found = (
+                        Path(root)
+                        /
+                        filename_found
+                    )
+
+                    break
+
+            if found:
+                break
+
+        if not found:
+            raise RuntimeError(
+                "sing-box.exe não foi encontrado "
+                "dentro do pacote oficial."
+            )
+
+        SINGBOX_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        shutil.copy2(
+            found,
+            SINGBOX_EXECUTABLE
+        )
+
+        if not SINGBOX_EXECUTABLE.exists():
+
+            raise RuntimeError(
+                "Não foi possível instalar sing-box.exe."
+            )
+
+        return SINGBOX_EXECUTABLE.resolve()
+
+    finally:
+
+        try:
+
+            temp_zip.unlink(
+                missing_ok=True
+            )
+
+        except Exception:
+            pass
+
+        try:
+
+            if extract_dir.exists():
+
+                shutil.rmtree(
+                    extract_dir,
+                    ignore_errors=True
+                )
+
+        except Exception:
+            pass
+
+
+def ensure_singbox_ready():
     """
-    Retorna o perfil salvo padrão do VPNBook.
+    Garante que o sing-box esteja instalado e utilizável
+    ANTES de o OpenVPN alterar qualquer estado de rede.
 
-    Padrão:
-
-        US Server 1
-        us16.vpnbook.com
-        TCP 443
+    Retorna:
+        Path -> sing-box.exe válido
     """
 
-    profile = vpnbook_find_profile(
-        VPNBOOK_DEFAULT_SERVER,
-        VPNBOOK_DEFAULT_PROTOCOL
+    singbox = find_singbox_executable()
+
+    if not singbox:
+        singbox = install_singbox()
+
+    if not singbox:
+        raise RuntimeError(
+            "Não foi possível preparar o componente App-VPN."
+        )
+
+    singbox = Path(singbox).resolve()
+
+    if not singbox.exists():
+        raise RuntimeError(
+            f"sing-box.exe não foi encontrado:\n{singbox}"
+        )
+
+    try:
+
+        result = subprocess.run(
+            [
+                str(singbox),
+                "version"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if os.name == "nt"
+                else 0
+            )
+        )
+
+    except Exception as e:
+
+        raise RuntimeError(
+            "Não foi possível executar sing-box.exe.\n\n"
+            f"{e}"
+        )
+
+    version_text = (
+        result.stdout
+        or
+        result.stderr
+        or
+        ""
     )
 
-    if profile:
+    match = re.search(
+        r"sing-box version\s+"
+        r"(\d+)\.(\d+)\.(\d+)",
+        version_text,
+        re.IGNORECASE
+    )
 
-        return profile
+    if not match:
+
+        raise RuntimeError(
+            "Não foi possível identificar "
+            "a versão do sing-box."
+        )
+
+    version_tuple = (
+        int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3)),
+    )
+
+    if version_tuple < (1, 14, 0):
+
+        raise RuntimeError(
+            "O OpenDis precisa de sing-box "
+            "1.14.0 ou superior."
+        )
+
+    return singbox
+
+
+def get_public_ip_retry(
+    timeout=8,
+    attempts=5,
+    delay=1.0
+):
+    """
+    Obtém o IP público com novas tentativas.
+
+    É usado nas verificações fail-closed do split tunnel:
+    se o IP não puder ser confirmado, o OpenDis não declara
+    isolamento como seguro.
+    """
+
+    attempts = max(
+        1,
+        int(attempts)
+    )
+
+    for attempt in range(
+        attempts
+    ):
+
+        ip = get_public_ip(
+            timeout=timeout
+        )
+
+        if ip:
+            return ip
+
+        if (
+            attempt
+            <
+            attempts - 1
+        ):
+            time.sleep(
+                max(
+                    0.1,
+                    float(delay)
+                )
+            )
 
     return None
+
+
+def get_windows_network_adapters():
+    """
+    Retorna adaptadores ativos do Windows.
+
+    Resultado:
+
+        [
+            {
+                "name": "...",
+                "description": "...",
+                "if_index": 12
+            }
+        ]
+    """
+
+    if os.name != "nt":
+        return []
+
+    powershell = (
+        "$items = Get-NetAdapter "
+        "-ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Status -eq 'Up' } | "
+        "Select-Object "
+        "Name, InterfaceDescription, ifIndex; "
+        "$items | ConvertTo-Json -Compress"
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            powershell
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        creationflags=subprocess.CREATE_NO_WINDOW
+    )
+
+    if result.returncode != 0:
+        return []
+
+    text = (
+        result.stdout
+        or ""
+    ).strip()
+
+    if not text:
+        return []
+
+    try:
+
+        data = json.loads(
+            text
+        )
+
+    except Exception:
+
+        return []
+
+    if isinstance(
+        data,
+        dict
+    ):
+        data = [data]
+
+    adapters = []
+
+    for item in data:
+
+        if not isinstance(
+            item,
+            dict
+        ):
+            continue
+
+        name = str(
+            item.get(
+                "Name",
+                ""
+            )
+        ).strip()
+
+        description = str(
+            item.get(
+                "InterfaceDescription",
+                ""
+            )
+        ).strip()
+
+        try:
+
+            if_index = int(
+                item.get(
+                    "ifIndex"
+                )
+            )
+
+        except Exception:
+
+            continue
+
+        adapters.append(
+            {
+                "name": name,
+                "description": description,
+                "if_index": if_index,
+            }
+        )
+
+    return adapters
+
+
+def find_openvpn_adapter(
+    exclude_if_indexes=None
+):
+    """
+    Localiza a interface ativa pertencente ao OpenVPN.
+
+    Estratégia:
+        1. procura interfaces VPN ativas;
+        2. se houver snapshot anterior ao OpenVPN,
+           prefere interfaces que NÃO existiam/estavam ativas antes;
+        3. usa nome/descrição como fallback.
+
+    exclude_if_indexes:
+        conjunto/lista de ifIndex capturados antes de iniciar
+        o OpenVPN.
+    """
+
+    adapters = get_windows_network_adapters()
+
+    excluded = set()
+
+    if exclude_if_indexes:
+
+        for value in exclude_if_indexes:
+
+            try:
+                excluded.add(
+                    int(value)
+                )
+            except Exception:
+                continue
+
+    keywords = (
+        "openvpn",
+        "tap-windows",
+        "tap windows",
+        "wintun",
+        "ovpn",
+    )
+
+    matches = []
+
+    for adapter in adapters:
+
+        searchable = (
+            adapter["name"]
+            +
+            " "
+            +
+            adapter["description"]
+        ).lower()
+
+        # Nunca confundir o TUN criado pelo próprio OpenDis.
+        if (
+            "opendis" in searchable
+            or
+            "sing-box" in searchable
+        ):
+            continue
+
+        if not any(
+            keyword in searchable
+            for keyword in keywords
+        ):
+            continue
+
+        matches.append(
+            adapter
+        )
+
+    if not matches:
+        return None
+
+    def sort_key(item):
+
+        searchable = (
+            item["name"]
+            +
+            " "
+            +
+            item["description"]
+        ).lower()
+
+        is_new = (
+            item["if_index"]
+            not in excluded
+        )
+
+        explicit_openvpn = (
+            "openvpn" in searchable
+            or
+            "ovpn" in searchable
+        )
+
+        return (
+            0 if is_new else 1,
+            0 if explicit_openvpn else 1,
+            item["if_index"],
+        )
+
+    matches.sort(
+        key=sort_key
+    )
+
+    return matches[0]
+
+def get_adapter_ipv4(
+    if_index
+):
+    """
+    Obtém IPv4 unicast da interface.
+    """
+
+    if os.name != "nt":
+        return None
+
+    try:
+
+        command = (
+            "Get-NetIPAddress "
+            f"-InterfaceIndex {int(if_index)} "
+            "-AddressFamily IPv4 "
+            "-AddressState Preferred "
+            "-ErrorAction SilentlyContinue | "
+            "Where-Object { "
+            "$_.IPAddress -notlike '169.254.*' "
+            "} | "
+            "Select-Object -First 1 "
+            "-ExpandProperty IPAddress"
+        )
+
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        value = (
+            result.stdout
+            or ""
+        ).strip()
+
+        if value:
+            return value.splitlines()[0].strip()
+
+    except Exception:
+        pass
+
+    return None
+
+
+
+def get_windows_default_ipv4_routes():
+    """
+    Retorna as rotas default IPv4 ativas do Windows com as métricas
+    efetivas de interface.
+
+    É usado para preservar exatamente a WAN existente antes de abrir
+    um perfil .ovpn manual.
+    """
+
+    if os.name != "nt":
+        return []
+
+    command = (
+        "$ifMetrics = @{}; "
+        "Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+        "ForEach-Object { $ifMetrics[[int]$_.InterfaceIndex] = [int]$_.InterfaceMetric }; "
+        "$routes = Get-NetRoute -AddressFamily IPv4 "
+        "-DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.State -ne 'Invalid' } | "
+        "ForEach-Object { "
+        "$im = 0; if ($ifMetrics.ContainsKey([int]$_.InterfaceIndex)) { "
+        "$im = $ifMetrics[[int]$_.InterfaceIndex] }; "
+        "[PSCustomObject]@{ "
+        "DestinationPrefix = [string]$_.DestinationPrefix; "
+        "InterfaceIndex = [int]$_.InterfaceIndex; "
+        "NextHop = [string]$_.NextHop; "
+        "RouteMetric = [int]$_.RouteMetric; "
+        "InterfaceMetric = [int]$im; "
+        "TotalMetric = ([int]$_.RouteMetric + [int]$im) "
+        "} }; "
+        "$routes | Sort-Object TotalMetric | ConvertTo-Json -Compress"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        text = (result.stdout or "").strip()
+
+        if not text:
+            return []
+
+        data = json.loads(text)
+
+        if isinstance(data, dict):
+            data = [data]
+
+        routes = []
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+
+            try:
+                routes.append(
+                    {
+                        "destination": str(
+                            item.get("DestinationPrefix", "0.0.0.0/0")
+                        ),
+                        "if_index": int(item.get("InterfaceIndex")),
+                        "next_hop": str(item.get("NextHop", "")).strip(),
+                        "route_metric": int(item.get("RouteMetric", 0)),
+                        "interface_metric": int(item.get("InterfaceMetric", 0)),
+                        "total_metric": int(item.get("TotalMetric", 0)),
+                    }
+                )
+            except Exception:
+                continue
+
+        return routes
+
+    except Exception:
+        return []
+
+
+def restore_manual_wan_routing(
+    wan_adapter,
+    baseline_default_routes,
+    vpn_adapter
+):
+    """
+    Fail-safe do caminho .ovpn manual.
+
+    O OpenVPN manual NÃO deve alterar a rota global do Windows.
+
+    O perfil manual mantém UMA rota default controlada na interface
+    VPN com métrica muito alta (>= 4000). Essa rota existe somente
+    para dar ao bridge L3 do sing-box um caminho de egress pela
+    interface OpenVPN. Como a WAN normal possui métrica muito menor,
+    ela continua sendo a rota preferida do Windows para o computador.
+
+    Esta função remove:
+        - qualquer def1 0.0.0.0/1 e 128.0.0.0/1 da VPN;
+        - qualquer default /0 da VPN com métrica baixa.
+
+    Também garante que a rota default original da WAN continue
+    presente no ActiveStore.
+
+    Não altera o fluxo VPNBook.
+    """
+
+    if os.name != "nt":
+        return True, ""
+
+    try:
+        wan_if_index = int(
+            wan_adapter.get("if_index")
+        )
+        vpn_if_index = int(
+            vpn_adapter.get("if_index")
+        )
+    except Exception:
+        return False, "Interface WAN/VPN inválida."
+
+    baseline_route = None
+
+    for route in baseline_default_routes or []:
+        try:
+            if int(route.get("if_index")) == wan_if_index:
+                baseline_route = dict(route)
+                break
+        except Exception:
+            continue
+
+    # Se o snapshot não trouxe a rota, não inventamos gateway.
+    # Ainda assim removemos qualquer default/def1 da VPN.
+    next_hop = ""
+    route_metric = 0
+
+    if baseline_route:
+        next_hop = str(
+            baseline_route.get("next_hop", "")
+        ).strip()
+        try:
+            route_metric = int(
+                baseline_route.get("route_metric", 0)
+            )
+        except Exception:
+            route_metric = 0
+
+    powershell = (
+        f"$vpnIf = {vpn_if_index}; "
+        f"$wanIf = {wan_if_index}; "
+
+        # redirect-gateway def1 sempre vence uma rota /0 pela
+        # especificidade do prefixo, independentemente da métrica.
+        # Portanto qualquer /1 na interface VPN deve desaparecer.
+        "$def1 = @('0.0.0.0/1','128.0.0.0/1'); "
+        "foreach ($prefix in $def1) { "
+        "Get-NetRoute -AddressFamily IPv4 -InterfaceIndex $vpnIf "
+        "-DestinationPrefix $prefix -ErrorAction SilentlyContinue | "
+        "Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue; "
+        "}; "
+
+        # Uma única /0 de métrica MUITO alta é intencional. Ela dá
+        # ao bridge do sing-box um next-hop pela VPN, porém não pode
+        # vencer a WAN normal. Defaults VPN de métrica baixa são
+        # tratadas como inseguras e removidas.
+        "Get-NetRoute -AddressFamily IPv4 -InterfaceIndex $vpnIf "
+        "-DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+        "Where-Object { [int]$_.RouteMetric -lt 4000 } | "
+        "Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue; "
+    )
+
+    if next_hop and next_hop != "0.0.0.0":
+        safe_next_hop = next_hop.replace("'", "''")
+        powershell += (
+            f"$gw = '{safe_next_hop}'; "
+            "$existing = Get-NetRoute -AddressFamily IPv4 "
+            "-DestinationPrefix '0.0.0.0/0' -InterfaceIndex $wanIf "
+            "-ErrorAction SilentlyContinue | "
+            "Where-Object { [string]$_.NextHop -eq $gw } | "
+            "Select-Object -First 1; "
+            "if ($null -eq $existing) { "
+            "New-NetRoute -AddressFamily IPv4 "
+            "-DestinationPrefix '0.0.0.0/0' "
+            "-InterfaceIndex $wanIf "
+            "-NextHop $gw "
+            f"-RouteMetric {max(route_metric, 0)} "
+            "-PolicyStore ActiveStore "
+            "-ErrorAction SilentlyContinue | Out-Null; "
+            "}; "
+        )
+
+    powershell += "Clear-DnsClientCache -ErrorAction SilentlyContinue; exit 0"
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                powershell,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        if result.returncode != 0:
+            return False, (
+                result.stderr.strip()
+                or "Falha ao restaurar a rota WAN."
+            )
+
+        return True, ""
+
+    except Exception as e:
+        return False, str(e)
+
+
+def get_default_ipv4_adapter():
+    """
+    Descobre a interface física/normal que o Windows está usando
+    para sair para a Internet ANTES do OpenVPN e do OpenDisTun.
+
+    A estratégia usa a rota que o próprio Windows escolheria para
+    1.1.1.1, sem enviar dados, e depois mapeia o IPv4 local para o
+    adaptador correspondente.
+
+    Retorna:
+        {
+            "name": "Ethernet" / "Wi-Fi" / ...,
+            "description": "...",
+            "if_index": 12,
+            "ipv4": "192.168.1.20"
+        }
+    """
+
+    if os.name != "nt":
+        return None
+
+    local_ip = None
+    probe = None
+
+    try:
+        probe = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_DGRAM
+        )
+        probe.settimeout(2)
+        probe.connect(
+            ("1.1.1.1", 53)
+        )
+        local_ip = probe.getsockname()[0]
+
+    except Exception:
+        local_ip = None
+
+    finally:
+        try:
+            if probe:
+                probe.close()
+        except Exception:
+            pass
+
+    if not local_ip:
+        return None
+
+    safe_ip = re.sub(
+        r"[^0-9.]",
+        "",
+        local_ip
+    )
+
+    if not safe_ip:
+        return None
+
+    command = (
+        f"$ip = Get-NetIPAddress "
+        f"-AddressFamily IPv4 "
+        f"-IPAddress '{safe_ip}' "
+        f"-ErrorAction SilentlyContinue | "
+        f"Select-Object -First 1; "
+        f"if ($null -ne $ip) {{ "
+        f"Get-NetAdapter -InterfaceIndex $ip.InterfaceIndex "
+        f"-ErrorAction SilentlyContinue | "
+        f"Select-Object Name,InterfaceDescription,ifIndex | "
+        f"ConvertTo-Json -Compress "
+        f"}}"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        text = (
+            result.stdout
+            or ""
+        ).strip()
+
+        if not text:
+            return None
+
+        data = json.loads(text)
+
+        return {
+            "name": str(
+                data.get("Name", "")
+            ).strip(),
+            "description": str(
+                data.get(
+                    "InterfaceDescription",
+                    ""
+                )
+            ).strip(),
+            "if_index": int(
+                data.get("ifIndex")
+            ),
+            "ipv4": local_ip,
+        }
+
+    except Exception:
+        return None
+
+
+def get_discord_established_connections(pids):
+    """
+    Retorna conexões TCP estabelecidas pertencentes aos processos
+    Discord informados.
+
+    É usado como verificação funcional: além de o processo existir,
+    o Discord precisa conseguir estabelecer ao menos uma conexão.
+    """
+
+    if os.name != "nt" or not pids:
+        return []
+
+    clean_pids = []
+
+    for pid in pids:
+        try:
+            value = int(pid)
+            if value > 0:
+                clean_pids.append(value)
+        except Exception:
+            continue
+
+    if not clean_pids:
+        return []
+
+    pid_list = ",".join(
+        str(pid)
+        for pid in sorted(set(clean_pids))
+    )
+
+    command = (
+        f"$ids = @({pid_list}); "
+        f"$c = Get-NetTCPConnection "
+        f"-State Established "
+        f"-ErrorAction SilentlyContinue | "
+        f"Where-Object {{ $ids -contains $_.OwningProcess }} | "
+        f"Select-Object -First 20 "
+        f"OwningProcess,RemoteAddress,RemotePort; "
+        f"$c | ConvertTo-Json -Compress"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        text = (
+            result.stdout
+            or ""
+        ).strip()
+
+        if not text:
+            return []
+
+        data = json.loads(text)
+
+        if isinstance(data, dict):
+            data = [data]
+
+        if not isinstance(data, list):
+            return []
+
+        return [
+            item
+            for item in data
+            if isinstance(item, dict)
+        ]
+
+    except Exception:
+        return []
+
+
+def flush_windows_dns_cache():
+    """
+    Limpa o cache DNS do Windows silenciosamente.
+    """
+
+    if os.name != "nt":
+        return True
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Clear-DnsClientCache",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        return result.returncode == 0
+
+    except Exception:
+        return False
+
+
+def wait_for_adapter_to_disappear(
+    adapter_name,
+    timeout=8
+):
+    """
+    Aguarda um adaptador virtual deixar de existir.
+    """
+
+    if os.name != "nt":
+        return True
+
+    deadline = time.time() + max(
+        1,
+        float(timeout)
+    )
+
+    safe_name = str(adapter_name).replace(
+        "'",
+        "''"
+    )
+
+    while time.time() < deadline:
+
+        try:
+            command = (
+                f"$a = Get-NetAdapter "
+                f"-Name '{safe_name}' "
+                f"-ErrorAction SilentlyContinue; "
+                f"if ($null -eq $a) {{ exit 0 }} "
+                f"else {{ exit 1 }}"
+            )
+
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    command,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            if result.returncode == 0:
+                return True
+
+        except Exception:
+            pass
+
+        time.sleep(0.25)
+
+    return False
+
+
+def is_windows_adapter_active(
+    adapter_name
+):
+    """
+    Retorna True somente quando o adaptador informado existe E está Up.
+
+    Um Wintun pode continuar aparecendo por alguns segundos no
+    Get-NetAdapter depois que o processo responsável já terminou.
+    Esse estado transitório não significa que o túnel continua ativo.
+    """
+
+    if os.name != "nt":
+        return False
+
+    safe_name = str(adapter_name).replace(
+        "'",
+        "''"
+    )
+
+    command = (
+        f"$a = Get-NetAdapter "
+        f"-Name '{safe_name}' "
+        f"-ErrorAction SilentlyContinue; "
+        f"if ($null -eq $a) {{ exit 1 }}; "
+        f"if ($a.Status -eq 'Up') {{ exit 0 }} else {{ exit 1 }}"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        return result.returncode == 0
+
+    except Exception:
+        return False
+
+
+def remove_opendis_tun_fallback():
+    """
+    Fallback somente para a interface criada pelo próprio OpenDis.
+
+    É usado apenas quando o sing-box já terminou e o adaptador
+    OpenDisTun ficou órfão. Nunca toca em TAP-Windows6/OpenVPN.
+    """
+
+    if os.name != "nt":
+        return True
+
+    command = (
+        "$a = Get-NetAdapter -Name 'OpenDisTun' "
+        "-ErrorAction SilentlyContinue; "
+        "if ($null -eq $a) { exit 0 }; "
+        "$desc = [string]$a.InterfaceDescription; "
+        "if ($desc -notmatch 'Wintun|sing-tun') { exit 2 }; "
+        "$id = [string]$a.PnPDeviceID; "
+        "if ([string]::IsNullOrWhiteSpace($id)) { exit 3 }; "
+        "& pnputil.exe /remove-device $id | Out-Null; "
+        "exit $LASTEXITCODE"
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        if result.returncode not in (0, 1):
+            return False
+
+        removed = wait_for_adapter_to_disappear(
+            "OpenDisTun",
+            timeout=6
+        )
+
+        if removed:
+            return True
+
+        # O dispositivo pode continuar listado por alguns instantes,
+        # porém já estar Down. Nesse caso o túnel não está mais ativo
+        # e não devemos gerar um falso positivo de falha.
+        return not is_windows_adapter_active(
+            "OpenDisTun"
+        )
+
+    except Exception:
+        return False
+
+
+
+class DiscordVPNEngine:
+    """
+    Engine App-VPN real do OpenDis.
+
+    Arquitetura:
+
+        OpenVPN
+            |
+            | route-nopull
+            |
+            +--> interface VPN disponível,
+                 mas NÃO default-route
+
+        sing-box TUN
+            |
+            +--> Discord.exe
+            |        |
+            |        +--> bridge
+            |              |
+            |              +--> interface OpenVPN
+            |
+            +--> qualquer outro processo
+                     |
+                     +--> direct
+                           |
+                           +--> WAN normal
+
+    Resultado pretendido:
+
+        Discord -> VPN
+        restante -> Internet normal
+    """
+
+    DISCORD_PROCESS_NAMES = [
+        "Discord.exe",
+        "DiscordPTB.exe",
+        "DiscordCanary.exe",
+    ]
+
+    def __init__(self):
+
+        self.openvpn_process = None
+        self.profile = None
+
+        self.discord_pids = set()
+
+        self.running = False
+        self.prepared = False
+
+        self._lock = threading.RLock()
+        self._process = None
+        self._log_handle = None
+
+        self._vpn_adapter = None
+        self._wan_adapter = None
+        self._singbox = None
+
+        self._config_file = SINGBOX_CONFIG_FILE
+
+
+    # ==========================================================
+    # LOG
+    # ==========================================================
+
+    def _log(
+        self,
+        message
+    ):
+
+        try:
+            print(message)
+        except Exception:
+            pass
+
+    # ==========================================================
+    # PREPARAR
+    # ==========================================================
+
+    def prepare(
+        self,
+        openvpn_process=None,
+        profile=None,
+        baseline_if_indexes=None,
+        wan_adapter=None
+    ):
+        """
+        Inicia o App-VPN depois que o OpenVPN estabeleceu o túnel.
+
+        Princípios:
+            - OpenVPN não vira rota padrão do Windows;
+            - OpenDisTun recebe o tráfego do sistema;
+            - Discord.exe é encaminhado em L3 para a interface OpenVPN;
+            - o restante sai pela interface WAN que já era padrão antes
+              da operação;
+            - DNS continua sendo o DNS normal do Windows/WAN.
+        """
+
+        if os.name != "nt":
+            raise RuntimeError(
+                "O App-VPN funciona somente no Windows."
+            )
+
+        if not is_running_as_admin():
+            raise RuntimeError(
+                "O OpenDis precisa estar executando como Administrador."
+            )
+
+        if (
+            openvpn_process is None
+            or
+            openvpn_process.poll() is not None
+        ):
+            raise RuntimeError(
+                "O OpenVPN não está conectado."
+            )
+
+        self.cleanup(
+            silent=True
+        )
+
+        self.openvpn_process = openvpn_process
+        self.profile = profile
+
+        # ------------------------------------------------------
+        # SING-BOX
+        # ------------------------------------------------------
+
+        self._singbox = ensure_singbox_ready()
+
+        version_result = subprocess.run(
+            [
+                str(self._singbox),
+                "version"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        version_text = (
+            version_result.stdout
+            or
+            version_result.stderr
+            or
+            ""
+        )
+
+        match = re.search(
+            r"sing-box version\s+"
+            r"(\d+)\.(\d+)\.(\d+)",
+            version_text,
+            re.IGNORECASE
+        )
+
+        if not match:
+            raise RuntimeError(
+                "Não foi possível identificar a versão do sing-box."
+            )
+
+        version_tuple = (
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+        )
+
+        if version_tuple < (1, 14, 0):
+            raise RuntimeError(
+                "O OpenDis precisa de sing-box 1.14.0 ou superior."
+            )
+
+        if "with_gvisor" not in version_text.lower():
+            raise RuntimeError(
+                "O sing-box encontrado não possui suporte gVisor.\n\n"
+                "Use o binário oficial do sing-box para Windows."
+            )
+
+        # ------------------------------------------------------
+        # WAN ORIGINAL
+        # ------------------------------------------------------
+
+        if not wan_adapter:
+            wan_adapter = get_default_ipv4_adapter()
+
+        if not wan_adapter:
+            raise RuntimeError(
+                "Não foi possível identificar a interface WAN original."
+            )
+
+        wan_name = str(
+            wan_adapter.get(
+                "name",
+                ""
+            )
+        ).strip()
+
+        if not wan_name:
+            raise RuntimeError(
+                "A interface WAN original não possui nome válido."
+            )
+
+        self._wan_adapter = dict(wan_adapter)
+
+        self._log(
+            f"🌐 WAN preservada: {wan_name}"
+        )
+
+        if wan_adapter.get("ipv4"):
+            self._log(
+                f"🌐 IPv4 WAN local: {wan_adapter['ipv4']}"
+            )
+
+        # ------------------------------------------------------
+        # INTERFACE OPENVPN
+        # ------------------------------------------------------
+
+        adapter = None
+        deadline = time.time() + 20
+
+        while time.time() < deadline:
+
+            adapter = find_openvpn_adapter(
+                exclude_if_indexes=baseline_if_indexes
+            )
+
+            if adapter:
+                ipv4 = get_adapter_ipv4(
+                    adapter["if_index"]
+                )
+
+                if ipv4:
+                    adapter["ipv4"] = ipv4
+                    break
+
+            time.sleep(0.5)
+
+        if not adapter:
+            raise RuntimeError(
+                "Não foi possível localizar a interface OpenVPN ativa."
+            )
+
+        if not adapter.get("ipv4"):
+            raise RuntimeError(
+                "A interface OpenVPN não possui um IPv4 válido."
+            )
+
+        self._vpn_adapter = adapter
+
+        self._log(
+            "🛡️ Interface OpenVPN encontrada: "
+            f"{adapter['name']}"
+        )
+        self._log(
+            f"🛡️ ifIndex OpenVPN: {adapter['if_index']}"
+        )
+        self._log(
+            f"🛡️ IPv4 OpenVPN: {adapter['ipv4']}"
+        )
+
+        # ------------------------------------------------------
+        # CONFIGURAÇÃO
+        # ------------------------------------------------------
+
+        self._config_file.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        tun_cidr = "172.29.87.0/30"
+
+        config = {
+            "log": {
+                "disabled": False,
+                "level": "info",
+                "timestamp": True,
+            },
+
+            "inbounds": [
+                {
+                    "type": "tun",
+                    "tag": "opendis-tun",
+                    "interface_name": "OpenDisTun",
+                    "address": [
+                        "172.29.87.1/30"
+                    ],
+                    "mtu": 1400,
+
+                    # Não assumir nem bloquear o DNS do Windows.
+                    "dns_mode": "disabled",
+
+                    "auto_route": True,
+
+                    # No Windows strict_route também instala filtros
+                    # WFP para DNS. Como o OpenDis usa o DNS normal da
+                    # WAN, deve ficar desligado.
+                    "strict_route": False,
+
+                    # Evita o problema do stack system no Windows em
+                    # que conexões aparecem no log, mas não retornam
+                    # dados ao aplicativo.
+                    "stack": "gvisor",
+                }
+            ],
+
+            "outbounds": [
+                {
+                    "type": "direct",
+                    "tag": "wan-direct",
+
+                    # Prende conexões normais explicitamente à placa
+                    # que era a WAN antes do OpenDisTun existir.
+                    "bind_interface": wan_name,
+                },
+                {
+                    "type": "bridge",
+                    "tag": "discord-vpn",
+                    "interface": adapter["name"],
+                },
+            ],
+
+            "route": {
+                "default_interface": wan_name,
+
+                "rules": [
+                    # Evita o conhecido self-loop do TUN no Windows.
+                    {
+                        "ip_cidr": [
+                            tun_cidr
+                        ],
+                        "action": "reject",
+                        "method": "drop",
+                    },
+
+                    # Endereços locais continuam na rede normal.
+                    {
+                        "ip_is_private": True,
+                        "action": "route",
+                        "outbound": "wan-direct",
+                    },
+
+                    # O OpenVPN selecionado neste fluxo é IPv4.
+                    # Bloquear IPv6 do Discord evita bypass pela WAN.
+                    {
+                        "process_name": self.DISCORD_PROCESS_NAMES,
+                        "ip_version": 6,
+                        "action": "reject",
+                        "method": "drop",
+                    },
+
+                    # Discord IPv4 -> interface OpenVPN em L3.
+                    {
+                        "process_name": self.DISCORD_PROCESS_NAMES,
+                        "ip_version": 4,
+                        "preferred_by": [
+                            "discord-vpn"
+                        ],
+                        "action": "route",
+                        "outbound": "discord-vpn",
+                    },
+                ],
+
+                # Todo o restante continua pela WAN original.
+                "final": "wan-direct",
+            },
+        }
+
+        temporary = self._config_file.with_suffix(
+            ".tmp"
+        )
+
+        temporary.write_text(
+            json.dumps(
+                config,
+                ensure_ascii=False,
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+
+        temporary.replace(
+            self._config_file
+        )
+
+        # ------------------------------------------------------
+        # VALIDAR CONFIGURAÇÃO
+        # ------------------------------------------------------
+
+        check_result = subprocess.run(
+            [
+                str(self._singbox),
+                "check",
+                "-c",
+                str(self._config_file)
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        if check_result.returncode != 0:
+            message = (
+                check_result.stderr
+                or
+                check_result.stdout
+                or
+                "erro desconhecido"
+            )
+
+            raise RuntimeError(
+                "A configuração App-VPN foi recusada pelo sing-box:\n\n"
+                f"{message[:2500]}"
+            )
+
+        # ------------------------------------------------------
+        # LOG DO ENGINE
+        # ------------------------------------------------------
+
+        SINGBOX_LOG_FILE.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        self._log_handle = open(
+            SINGBOX_LOG_FILE,
+            "a",
+            encoding="utf-8",
+            errors="replace"
+        )
+
+        self._log_handle.write(
+            "\n========================================\n"
+            f"OpenDis App-VPN {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            "========================================\n"
+        )
+        self._log_handle.flush()
+
+        # ------------------------------------------------------
+        # INICIAR SING-BOX
+        # ------------------------------------------------------
+
+        creationflags = 0
+        startupinfo = None
+
+        if os.name == "nt":
+            # Console próprio oculto. Isso permite tentar enviar
+            # CTRL_BREAK na finalização para o sing-box executar o
+            # teardown do Wintun antes do fallback terminate/kill.
+            creationflags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP
+                |
+                subprocess.CREATE_NEW_CONSOLE
+            )
+
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+
+        self._process = subprocess.Popen(
+            [
+                str(self._singbox),
+                "run",
+                "-c",
+                str(self._config_file)
+            ],
+            stdout=self._log_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+            startupinfo=startupinfo
+        )
+
+        # ------------------------------------------------------
+        # AGUARDAR TUN
+        # ------------------------------------------------------
+
+        deadline = time.time() + 20
+
+        while time.time() < deadline:
+
+            if self._process.poll() is not None:
+                try:
+                    log_text = SINGBOX_LOG_FILE.read_text(
+                        encoding="utf-8",
+                        errors="replace"
+                    )
+                except Exception:
+                    log_text = ""
+
+                raise RuntimeError(
+                    "O engine App-VPN encerrou durante a inicialização.\n\n"
+                    f"{log_text[-3000:]}"
+                )
+
+            if self._find_opendis_tun():
+                break
+
+            time.sleep(0.25)
+
+        if not self._find_opendis_tun():
+            raise RuntimeError(
+                "A interface OpenDisTun não foi criada."
+            )
+
+        # O TUN foi criado; limpar respostas DNS antigas evita o
+        # Discord reutilizar falhas da tentativa anterior.
+        flush_windows_dns_cache()
+
+        self.running = True
+        self.prepared = True
+
+        self._log(
+            "🛡️ App-VPN iniciado."
+        )
+        self._log(
+            "💬 Discord.exe -> OpenVPN"
+        )
+        self._log(
+            f"🌐 demais processos -> {wan_name}"
+        )
+
+        return True
+
+
+    # ==========================================================
+    # LOCALIZAR TUN OPENDIS
+    # ==========================================================
+
+    def _find_opendis_tun(
+        self
+    ):
+
+        try:
+
+            adapters = (
+                get_windows_network_adapters()
+            )
+
+            for adapter in adapters:
+
+                text = (
+                    adapter["name"]
+                    +
+                    " "
+                    +
+                    adapter["description"]
+                ).lower()
+
+                if (
+                    "opendistun"
+                    in text
+                    or
+                    "opendis"
+                    in text
+                ):
+                    return adapter
+
+        except Exception:
+            pass
+
+        return None
+
+    # ==========================================================
+    # ASSOCIAR PROCESSOS
+    # ==========================================================
+
+    def attach_processes(
+        self,
+        pids
+    ):
+        """
+        O sing-box associa por nome/path do processo.
+
+        Mantemos os PIDs aqui para:
+            - integração com seu monitor atual
+            - diagnóstico
+            - verify()
+        """
+
+        if not self.prepared:
+
+            raise RuntimeError(
+                "O engine App-VPN "
+                "ainda não foi preparado."
+            )
+
+        if not pids:
+            return False
+
+        accepted = []
+
+        with self._lock:
+
+            for pid in pids:
+
+                try:
+
+                    pid = int(
+                        pid
+                    )
+
+                except Exception:
+                    continue
+
+                if pid <= 0:
+                    continue
+
+                name = (
+                    get_process_name(
+                        pid
+                    )
+                )
+
+                if not name:
+                    continue
+
+                if name.lower() not in {
+                    item.lower()
+                    for item
+                    in self.DISCORD_PROCESS_NAMES
+                }:
+
+                    continue
+
+                self.discord_pids.add(
+                    pid
+                )
+
+                accepted.append(
+                    pid
+                )
+
+        if accepted:
+
+            self._log(
+                "🛡️ Discord protegido: "
+                f"{sorted(self.discord_pids)}"
+            )
+
+            return True
+
+        return False
+
+    # ==========================================================
+    # VERIFICAÇÃO
+    # ==========================================================
+
+    def verify(
+        self,
+        pids
+    ):
+        """
+        Valida a estrutura ativa do isolamento.
+
+        A verificação funcional da conexão do Discord é feita pelo
+        OpenDis depois de o aplicativo ser iniciado.
+        """
+
+        if not self.prepared or not self.running:
+            return False
+
+        if (
+            not self._process
+            or
+            self._process.poll() is not None
+        ):
+            return False
+
+        if (
+            not self.openvpn_process
+            or
+            self.openvpn_process.poll() is not None
+        ):
+            return False
+
+        if not self._find_opendis_tun():
+            return False
+
+        if not self._vpn_adapter or not self._wan_adapter:
+            return False
+
+        active_adapters = get_windows_network_adapters()
+        active_indexes = {
+            int(item["if_index"])
+            for item in active_adapters
+            if item.get("if_index") is not None
+        }
+
+        if int(self._vpn_adapter["if_index"]) not in active_indexes:
+            return False
+
+        if int(self._wan_adapter["if_index"]) not in active_indexes:
+            return False
+
+        if not pids:
+            return False
+
+        valid_pids = set()
+
+        for pid in pids:
+            try:
+                pid = int(pid)
+            except Exception:
+                continue
+
+            name = get_process_name(pid)
+
+            if not name:
+                continue
+
+            if name.lower() in {
+                item.lower()
+                for item in self.DISCORD_PROCESS_NAMES
+            }:
+                valid_pids.add(pid)
+
+        if not valid_pids:
+            return False
+
+        with self._lock:
+            if not (
+                valid_pids
+                <=
+                self.discord_pids
+            ):
+                return False
+
+        try:
+            config = json.loads(
+                self._config_file.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            return False
+
+        outbounds = config.get(
+            "outbounds",
+            []
+        )
+
+        direct_ok = False
+        bridge_ok = False
+
+        for outbound in outbounds:
+            if not isinstance(outbound, dict):
+                continue
+
+            if (
+                outbound.get("tag") == "wan-direct"
+                and
+                outbound.get("bind_interface")
+                ==
+                self._wan_adapter["name"]
+            ):
+                direct_ok = True
+
+            if (
+                outbound.get("tag") == "discord-vpn"
+                and
+                outbound.get("interface")
+                ==
+                self._vpn_adapter["name"]
+            ):
+                bridge_ok = True
+
+        if not direct_ok or not bridge_ok:
+            return False
+
+        rules = config.get(
+            "route",
+            {}
+        ).get(
+            "rules",
+            []
+        )
+
+        discord_rule_found = False
+
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+
+            processes = rule.get(
+                "process_name",
+                []
+            )
+
+            if isinstance(processes, str):
+                processes = [processes]
+
+            processes_lower = {
+                str(item).lower()
+                for item in processes
+            }
+
+            if (
+                "discord.exe" in processes_lower
+                and
+                rule.get("outbound") == "discord-vpn"
+                and
+                "discord-vpn" in rule.get("preferred_by", [])
+            ):
+                discord_rule_found = True
+                break
+
+        return discord_rule_found
+
+
+    # ==========================================================
+    # LIMPEZA
+    # ==========================================================
+
+    def _request_graceful_singbox_stop(
+        self,
+        process
+    ):
+        """
+        Tenta entregar CTRL_BREAK ao console oculto do sing-box.
+
+        Se não for possível, cleanup() continua com terminate/kill.
+        """
+
+        if os.name != "nt" or not process:
+            return False
+
+        try:
+            kernel32 = ctypes.windll.kernel32
+
+            had_console = bool(
+                kernel32.GetConsoleWindow()
+            )
+
+            # Desanexa temporariamente o OpenDis do console atual,
+            # caso esteja rodando como .py em um terminal.
+            try:
+                kernel32.FreeConsole()
+            except Exception:
+                pass
+
+            attached = bool(
+                kernel32.AttachConsole(
+                    int(process.pid)
+                )
+            )
+
+            if not attached:
+                if had_console:
+                    try:
+                        kernel32.AttachConsole(
+                            0xFFFFFFFF
+                        )
+                    except Exception:
+                        pass
+                return False
+
+            try:
+                # O OpenDis não deve receber o evento que está enviando.
+                kernel32.SetConsoleCtrlHandler(
+                    None,
+                    True
+                )
+
+                result = bool(
+                    kernel32.GenerateConsoleCtrlEvent(
+                        int(signal.CTRL_BREAK_EVENT),
+                        int(process.pid)
+                    )
+                )
+
+                time.sleep(0.15)
+
+                return result
+
+            finally:
+                try:
+                    kernel32.FreeConsole()
+                except Exception:
+                    pass
+
+                try:
+                    kernel32.SetConsoleCtrlHandler(
+                        None,
+                        False
+                    )
+                except Exception:
+                    pass
+
+                if had_console:
+                    try:
+                        kernel32.AttachConsole(
+                            0xFFFFFFFF
+                        )
+                    except Exception:
+                        pass
+
+        except Exception:
+            return False
+
+    def cleanup(
+        self,
+        silent=False
+    ):
+        """
+        Encerra a camada App-VPN e devolve o Windows ao estado
+        anterior ao OpenDisTun.
+
+        Não encerra o OpenVPN; isso é responsabilidade do fluxo
+        principal, para manter a ordem correta:
+
+            1. remover OpenDisTun
+            2. encerrar OpenVPN
+            3. voltar integralmente à WAN original
+        """
+
+        self.running = False
+        self.prepared = False
+
+        process = self._process
+        process_stopped = True
+
+        if process:
+            process_stopped = False
+
+            try:
+                if process.poll() is None:
+                    self._request_graceful_singbox_stop(
+                        process
+                    )
+
+                    try:
+                        process.wait(
+                            timeout=6
+                        )
+                    except subprocess.TimeoutExpired:
+                        pass
+
+                if process.poll() is None:
+                    try:
+                        process.terminate()
+                    except Exception:
+                        pass
+
+                    try:
+                        process.wait(
+                            timeout=4
+                        )
+                    except subprocess.TimeoutExpired:
+                        pass
+
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+
+                    try:
+                        process.wait(
+                            timeout=4
+                        )
+                    except Exception:
+                        pass
+
+                process_stopped = (
+                    process.poll() is not None
+                )
+
+            except Exception:
+                process_stopped = (
+                    process.poll() is not None
+                )
+
+        self._process = None
+
+        try:
+            if self._log_handle:
+                self._log_handle.flush()
+                self._log_handle.close()
+        except Exception:
+            pass
+
+        self._log_handle = None
+
+        # O Wintun normalmente remove a interface quando o processo
+        # fecha corretamente. O Windows, porém, pode manter o adaptador
+        # listado como Down por alguns segundos mesmo depois do túnel já
+        # ter sido encerrado. Esse estado não é falha de limpeza.
+        tun_removed = wait_for_adapter_to_disappear(
+            "OpenDisTun",
+            timeout=4
+        )
+
+        if not tun_removed:
+
+            tun_still_active = is_windows_adapter_active(
+                "OpenDisTun"
+            )
+
+            if tun_still_active:
+                tun_removed = remove_opendis_tun_fallback()
+            else:
+                # Adaptador residual/inativo: tráfego já não passa
+                # pelo OpenDisTun. Consideramos o teardown concluído
+                # e deixamos o Windows remover o objeto residual.
+                tun_removed = True
+
+        flush_windows_dns_cache()
+
+        with self._lock:
+            self.discord_pids.clear()
+
+        self._vpn_adapter = None
+        self._wan_adapter = None
+
+        if not silent:
+            if tun_removed:
+                self._log(
+                    "🧹 OpenDisTun removido."
+                )
+            else:
+                self._log(
+                    "⚠️ OpenDisTun ainda aparece no Windows; "
+                    "o processo do engine já foi encerrado."
+                )
+
+            self._log(
+                "🧹 App-VPN encerrado."
+            )
+
+        # Para a restauração de rede, o critério importante é o TUN
+        # não permanecer ativo. Em alguns builds do Windows o handle do
+        # processo pode demorar um pouco para refletir o encerramento,
+        # mesmo com a interface já desmontada. Não transformamos isso
+        # em falso positivo para o usuário.
+        return tun_removed
+
+
 
 # ============================================================
 # APP
@@ -2860,6 +5121,10 @@ class OpenDisApp(ctk.CTk):
             False
         )
 
+        # --------------------------------------------------------
+        # ESTADO DA OPERAÇÃO
+        # --------------------------------------------------------
+
         self.vpn_process = None
         self.vpn_log_file = None
         self.current_profile = None
@@ -2867,9 +5132,40 @@ class OpenDisApp(ctk.CTk):
         self.ovpn_username = ""
         self.ovpn_password = ""
         self.is_vpnbook_profile = False
+
+        self.discord_process = None
+        self.discord_pids = []
+
+        self.operation_active = False
+        self.shutdown_in_progress = False
+        self.operation_stop_event = threading.Event()
+
+        # --------------------------------------------------------
+        # APP-VPN
+        # --------------------------------------------------------
+
+        self.vpn_engine = DiscordVPNEngine()
+
+        # --------------------------------------------------------
+        # VPNBOOK / PING AO VIVO
+        # --------------------------------------------------------
+
         self.random_vpn_button = None
         self.save_vpnbook_var = None
         self.save_vpnbook_checkbox = None
+
+        self.vpn_ping_stop_event = None
+        self.vpn_ping_thread = None
+        self.vpn_ping_widgets = {}
+        self.vpn_selection_servers = []
+        self.best_ping_label = None
+        self.best_vpn_button = None
+
+        # --------------------------------------------------------
+        # UI FINAL
+        # --------------------------------------------------------
+
+        self.stop_vpn_btn = None
 
         self.center_window()
 
@@ -2908,7 +5204,15 @@ class OpenDisApp(ctk.CTk):
             anchor="center"
         )
 
+        # O X da janela também deve desfazer a VPN quando houver
+        # uma operação ativa, evitando processos órfãos.
+        self.protocol(
+            "WM_DELETE_WINDOW",
+            self.on_window_close
+        )
+
         self.show_splash()
+
 
 
     # ========================================================
@@ -2948,6 +5252,9 @@ class OpenDisApp(ctk.CTk):
 
             widget.destroy()
 
+    # ========================================================
+    # MONITORAR PROCESSOS DO DISCORD
+    # ========================================================
 
     # ========================================================
     # SPLASH
@@ -3010,30 +5317,6 @@ class OpenDisApp(ctk.CTk):
             self.check_for_update_ui
         )
 
-    def bring_to_front(self):
-
-        try:
-
-            self.deiconify()
-            self.lift()
-
-            self.attributes(
-                "-topmost",
-                True
-            )
-
-            self.after(
-                150,
-                lambda: self.attributes(
-                    "-topmost",
-                    False
-                )
-            )
-
-            self.focus_force()
-
-        except Exception:
-            pass
     # ========================================================
     # REQUISITOS
     # ========================================================
@@ -3771,6 +6054,7 @@ class OpenDisApp(ctk.CTk):
 
     def show_profile_screen(self):
 
+        self.stop_vpn_ping_monitor()
         self.clear()
 
         ctk.CTkLabel(
@@ -4052,6 +6336,12 @@ class OpenDisApp(ctk.CTk):
     # ========================================================
 
     def profile_selected(self):
+
+        # Seleção manual não pode herdar estado do fluxo VPNBook.
+        # Isto é importante porque o perfil manual usa uma política
+        # de rotas mais restritiva no runtime do OpenVPN.
+        self.selected_vpn_server = None
+        self.is_vpnbook_profile = False
 
         profile = self.selected_profile_path()
 
@@ -4425,11 +6715,831 @@ class OpenDisApp(ctk.CTk):
         self.ovpn_username = ""
         self.ovpn_password = ""
         self.is_vpnbook_profile = False
+        self.selected_vpn_server = None
 
         self.show_profile_screen()
 
-    def show_connect_screen(self):
+    def show_vpn_selection_screen(self, servers):
+        """
+        Exibe os servidores VPNBook e mantém o ping sendo atualizado
+        continuamente enquanto esta tela estiver aberta.
+        """
+
+        self.stop_vpn_ping_monitor()
         self.clear()
+
+        self.vpn_selection_servers = [
+            dict(item)
+            for item in servers
+        ]
+
+        self.vpn_ping_widgets = {}
+
+        ctk.CTkLabel(
+            self.container,
+            text="🌐 Escolha sua VPN",
+            font=ctk.CTkFont(
+                size=24,
+                weight="bold"
+            ),
+            text_color="#cccccc"
+        ).pack(
+            pady=(22, 4)
+        )
+
+        ctk.CTkLabel(
+            self.container,
+            text="Ping atualizado continuamente",
+            font=ctk.CTkFont(
+                size=12
+            ),
+            text_color="#888899"
+        ).pack(
+            pady=(0, 4)
+        )
+
+        self.best_ping_label = ctk.CTkLabel(
+            self.container,
+            text="🔄 Calculando melhor servidor...",
+            font=ctk.CTkFont(
+                size=11,
+                weight="bold"
+            ),
+            text_color="#57F287"
+        )
+
+        self.best_ping_label.pack(
+            pady=(0, 8)
+        )
+
+        list_frame = ctk.CTkFrame(
+            self.container,
+            fg_color="#12121a",
+            corner_radius=12
+        )
+
+        list_frame.pack(
+            fill="both",
+            expand=True,
+            padx=20,
+            pady=(2, 7)
+        )
+
+        header = ctk.CTkFrame(
+            list_frame,
+            fg_color="transparent"
+        )
+
+        header.pack(
+            fill="x",
+            padx=10,
+            pady=(8, 5)
+        )
+
+        ctk.CTkLabel(
+            header,
+            text="SERVIDOR",
+            width=145,
+            anchor="w",
+            font=ctk.CTkFont(
+                size=10,
+                weight="bold"
+            ),
+            text_color="#666675"
+        ).pack(
+            side="left"
+        )
+
+        ctk.CTkLabel(
+            header,
+            text="PING",
+            width=65,
+            anchor="center",
+            font=ctk.CTkFont(
+                size=10,
+                weight="bold"
+            ),
+            text_color="#666675"
+        ).pack(
+            side="left"
+        )
+
+        ctk.CTkLabel(
+            header,
+            text="",
+            width=25
+        ).pack(
+            side="left"
+        )
+
+        scroll_frame = ctk.CTkScrollableFrame(
+            list_frame,
+            fg_color="transparent",
+            corner_radius=8
+        )
+
+        scroll_frame.pack(
+            fill="both",
+            expand=True,
+            padx=6,
+            pady=(0, 6)
+        )
+
+        self.vpn_scroll_frame = scroll_frame
+
+        for item in self.vpn_selection_servers:
+
+            row = ctk.CTkFrame(
+                scroll_frame,
+                fg_color="#1e1e2e",
+                corner_radius=8
+            )
+
+            row.pack(
+                fill="x",
+                padx=2,
+                pady=4
+            )
+
+            server_name = item.get(
+                "name",
+                "VPN"
+            )
+
+            server_host = item.get(
+                "server",
+                ""
+            )
+
+            ping = item.get("ping")
+            dot, dot_color = ping_status(ping)
+
+            name_frame = ctk.CTkFrame(
+                row,
+                fg_color="transparent",
+                width=145
+            )
+
+            name_frame.pack(
+                side="left",
+                padx=(8, 0),
+                pady=8
+            )
+
+            name_frame.pack_propagate(False)
+
+            ctk.CTkLabel(
+                name_frame,
+                text=server_name,
+                anchor="w",
+                font=ctk.CTkFont(
+                    size=11,
+                    weight="bold"
+                ),
+                text_color="#dddddd"
+            ).pack(fill="x")
+
+            ctk.CTkLabel(
+                name_frame,
+                text=server_host,
+                anchor="w",
+                font=ctk.CTkFont(size=9),
+                text_color="#777788"
+            ).pack(fill="x")
+
+            ping_label = ctk.CTkLabel(
+                row,
+                text=(
+                    f"{ping} ms"
+                    if ping is not None
+                    else "..."
+                ),
+                width=65,
+                font=ctk.CTkFont(
+                    size=11,
+                    weight="bold"
+                ),
+                text_color="#cccccc"
+            )
+
+            ping_label.pack(side="left")
+
+            dot_label = ctk.CTkLabel(
+                row,
+                text=dot,
+                width=25,
+                font=ctk.CTkFont(
+                    size=17,
+                    weight="bold"
+                ),
+                text_color=dot_color
+            )
+
+            dot_label.pack(side="left")
+
+            select_button = ctk.CTkButton(
+                row,
+                text="SELECIONAR",
+                width=92,
+                height=30,
+                font=ctk.CTkFont(
+                    size=10,
+                    weight="bold"
+                ),
+                corner_radius=15,
+                fg_color="#5865F2",
+                hover_color="#4752C4",
+                command=lambda s=item:
+                self.select_vpn_server(s)
+            )
+
+            select_button.pack(
+                side="right",
+                padx=8
+            )
+
+            self.vpn_ping_widgets[
+                server_host.lower()
+            ] = {
+                "ping_label": ping_label,
+                "dot_label": dot_label,
+                "select_button": select_button,
+            }
+
+        self.best_vpn_button = ctk.CTkButton(
+            self.container,
+            text="⚡ USAR MENOR PING AGORA",
+            command=self.select_best_vpn_server,
+            fg_color="#3ba55d",
+            hover_color="#2d7d46",
+            width=250,
+            height=36,
+            font=ctk.CTkFont(
+                size=12,
+                weight="bold"
+            ),
+            corner_radius=18
+        )
+
+        self.best_vpn_button.pack(
+            pady=(3, 4)
+        )
+
+        ctk.CTkButton(
+            self.container,
+            text="← VOLTAR",
+            command=self.back_from_vpn_selection,
+            fg_color="#4a4a5a",
+            hover_color="#383846",
+            width=180,
+            height=35,
+            font=ctk.CTkFont(
+                size=13,
+                weight="bold"
+            ),
+            corner_radius=18
+        ).pack(
+            pady=(2, 9)
+        )
+
+        self.start_vpn_ping_monitor()
+
+    def start_vpn_ping_monitor(self):
+        """
+        Inicia a atualização contínua dos pings da tela VPNBook.
+        """
+
+        self.stop_vpn_ping_monitor()
+
+        if not self.vpn_selection_servers:
+            return
+
+        stop_event = threading.Event()
+        self.vpn_ping_stop_event = stop_event
+
+        self.vpn_ping_thread = threading.Thread(
+            target=self._vpn_ping_worker,
+            args=(stop_event,),
+            daemon=True
+        )
+
+        self.vpn_ping_thread.start()
+
+    def stop_vpn_ping_monitor(self):
+        """
+        Encerra o monitor de ping sem bloquear a interface.
+        """
+
+        event = getattr(
+            self,
+            "vpn_ping_stop_event",
+            None
+        )
+
+        if event:
+            event.set()
+
+        self.vpn_ping_stop_event = None
+        self.vpn_ping_thread = None
+
+    def _vpn_ping_worker(self, stop_event):
+        """
+        Mede cada servidor repetidamente. Com três servidores,
+        cada linha recebe um valor novo a cada poucos segundos.
+        """
+
+        while not stop_event.is_set():
+
+            for item in list(
+                self.vpn_selection_servers
+            ):
+
+                if stop_event.is_set():
+                    return
+
+                host = str(
+                    item.get(
+                        "server",
+                        ""
+                    )
+                ).strip()
+
+                if not host:
+                    continue
+
+                ping = ping_vpn_server(
+                    host,
+                    timeout=900
+                )
+
+                item["ping"] = ping
+
+                self.after(
+                    0,
+                    lambda h=host, p=ping:
+                    self._apply_live_ping(
+                        h,
+                        p
+                    )
+                )
+
+                # Pequeno intervalo entre hosts para não gerar uma
+                # sequência contínua de processos ping.exe.
+                if stop_event.wait(0.20):
+                    return
+
+            # Atualização quase contínua sem consumo desnecessário.
+            if stop_event.wait(1.0):
+                return
+
+    def _apply_live_ping(self, host, ping):
+        """
+        Atualiza os widgets de um servidor e destaca o melhor atual.
+        """
+
+        try:
+            key = str(host).lower()
+            widgets = self.vpn_ping_widgets.get(key)
+
+            if widgets:
+                ping_text = (
+                    f"{ping} ms"
+                    if ping is not None
+                    else "Offline"
+                )
+
+                dot, dot_color = ping_status(ping)
+
+                widgets["ping_label"].configure(
+                    text=ping_text
+                )
+
+                widgets["dot_label"].configure(
+                    text=dot,
+                    text_color=dot_color
+                )
+
+            available = [
+                item
+                for item in self.vpn_selection_servers
+                if item.get("ping") is not None
+            ]
+
+            best = None
+
+            if available:
+                best = min(
+                    available,
+                    key=lambda item: item["ping"]
+                )
+
+            best_host = (
+                str(best.get("server", "")).lower()
+                if best
+                else ""
+            )
+
+            for server_host, data in self.vpn_ping_widgets.items():
+                if server_host == best_host:
+                    data["select_button"].configure(
+                        text="★ MELHOR"
+                    )
+                else:
+                    data["select_button"].configure(
+                        text="SELECIONAR"
+                    )
+
+            if self.best_ping_label:
+                if best:
+                    self.best_ping_label.configure(
+                        text=(
+                            f"★ Melhor agora: "
+                            f"{best.get('name', 'VPN')} • "
+                            f"{best.get('ping')} ms"
+                        )
+                    )
+                else:
+                    self.best_ping_label.configure(
+                        text="🔴 Nenhum servidor respondeu agora"
+                    )
+
+        except Exception:
+            # A tela pode ter sido destruída entre o ping e o callback.
+            pass
+
+    def select_best_vpn_server(self):
+        """
+        Seleciona o servidor com o menor ping medido neste instante.
+        """
+
+        available = [
+            item
+            for item in self.vpn_selection_servers
+            if item.get("ping") is not None
+        ]
+
+        if not available:
+            mb.showwarning(
+                "VPNBook",
+                "Nenhum servidor respondeu ao ping neste momento."
+            )
+            return
+
+        best = min(
+            available,
+            key=lambda item: item["ping"]
+        )
+
+        self.select_vpn_server(best)
+
+    def back_from_vpn_selection(self):
+        self.stop_vpn_ping_monitor()
+        self.show_profile_screen()
+
+
+    def select_vpn_server(self, server):
+        """
+        Define o servidor VPNBook escolhido usando o valor de ping
+        mais recente disponível na tela ao vivo.
+        """
+
+        self.stop_vpn_ping_monitor()
+
+        self.selected_vpn_server = dict(server)
+        self.current_profile = None
+        self.ovpn_username = ""
+        self.ovpn_password = ""
+        self.is_vpnbook_profile = True
+
+        self.log(
+            f"🌐 VPN selecionada: "
+            f"{server.get('name', 'VPN')}"
+        )
+        self.log(
+            f"🔌 Servidor: "
+            f"{server.get('server', '')}"
+        )
+        self.log(
+            f"📡 Ping atual: "
+            f"{server.get('ping', 'N/A')} ms"
+        )
+        self.log(
+            "⏳ Preparando perfil VPN..."
+        )
+
+        try:
+            for widget in self.vpn_scroll_frame.winfo_children():
+                for child in widget.winfo_children():
+                    if isinstance(child, ctk.CTkButton):
+                        child.configure(state="disabled")
+        except Exception:
+            pass
+
+        if self.best_vpn_button:
+            try:
+                self.best_vpn_button.configure(
+                    state="disabled"
+                )
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=self._prepare_selected_vpn,
+            daemon=True
+        ).start()
+
+
+    def _prepare_selected_vpn(self):
+        """
+        Localiza ou baixa o perfil correspondente
+        ao servidor VPNBook selecionado.
+        """
+
+        try:
+
+            # ====================================================
+            # SERVIDOR
+            # ====================================================
+
+            server = getattr(
+                self,
+                "selected_vpn_server",
+                None
+            )
+
+            if not server:
+                raise RuntimeError(
+                    "Nenhum servidor VPN foi selecionado."
+                )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    f"🔧 Preparando: "
+                    f"{server.get('name', 'VPN')}"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    f"🌐 Host: "
+                    f"{server.get('server', '')}"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    f"🔌 Protocolo: "
+                    f"{server.get('protocol', '')}"
+                )
+            )
+
+            # ====================================================
+            # CREDENCIAIS
+            # ====================================================
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔐 Obtendo credenciais atuais do VPNBook..."
+                )
+            )
+
+            username, password = (
+                vpnbook_get_credentials()
+            )
+
+            if not username or not password:
+                raise RuntimeError(
+                    "Não foi possível obter "
+                    "as credenciais atuais do VPNBook."
+                )
+
+            # ====================================================
+            # PROCURAR PERFIL
+            # ====================================================
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔎 Procurando perfil .ovpn salvo..."
+                )
+            )
+
+            profile = vpnbook_find_profile(
+                server["server"],
+                server["protocol"]
+            )
+
+            # ====================================================
+            # BAIXAR SE NECESSÁRIO
+            # ====================================================
+
+            if not profile:
+
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "📥 Perfil não encontrado."
+                    )
+                )
+
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "📥 Baixando configuração OpenVPN..."
+                    )
+                )
+
+                profile = vpnbook_download_profile(
+                    server=server["server"],
+                    protocol=server["protocol"]
+                )
+
+            else:
+
+                self.after(
+                    0,
+                    lambda p=profile:
+                    self.log(
+                        f"💾 Perfil encontrado: "
+                        f"{p.name}"
+                    )
+                )
+
+            # ====================================================
+            # VALIDAR
+            # ====================================================
+
+            if not profile:
+                raise RuntimeError(
+                    "O perfil VPN não foi encontrado."
+                )
+
+            profile = Path(
+                profile
+            )
+
+            if not profile.exists():
+                raise RuntimeError(
+                    f"Perfil VPN não existe:\n{profile}"
+                )
+
+            if profile.suffix.lower() != ".ovpn":
+                raise RuntimeError(
+                    "O arquivo baixado não é um "
+                    "perfil OpenVPN válido."
+                )
+
+            # ====================================================
+            # PRONTO
+            # ====================================================
+
+            self.after(
+                0,
+                lambda p=profile:
+                self.log(
+                    f"✅ Perfil pronto: {p.name}"
+                )
+            )
+
+            self.after(
+                0,
+                lambda p=profile,
+                       u=username,
+                       pw=password:
+                self._selected_vpn_ready(
+                    p,
+                    u,
+                    pw
+                )
+            )
+
+        except Exception as e:
+
+            error = str(e)
+
+            self.after(
+                0,
+                lambda msg=error:
+                self._random_vpn_error(
+                    msg
+                )
+            )
+
+    def _selected_vpn_ready(
+            self,
+            profile,
+            username,
+            password
+    ):
+        """
+        Define o perfil selecionado e segue
+        para a tela de preparação.
+        """
+
+        self.current_profile = Path(
+            profile
+        )
+
+        self.ovpn_username = username
+        self.ovpn_password = password
+
+        self.is_vpnbook_profile = True
+
+        server = getattr(
+            self,
+            "selected_vpn_server",
+            None
+        )
+
+        # ========================================================
+        # LOG
+        # ========================================================
+
+        self.log(
+            "========================================"
+        )
+
+        self.log(
+            "✅ VPN preparada com sucesso."
+        )
+
+        if server:
+            self.log(
+                f"🌐 VPN: "
+                f"{server.get('name', 'VPN')}"
+            )
+
+            self.log(
+                f"📡 Host: "
+                f"{server.get('server', '')}"
+            )
+
+            self.log(
+                f"📶 Ping: "
+                f"{server.get('ping', 'N/A')} ms"
+            )
+
+            self.log(
+                f"🔌 Protocolo: "
+                f"{server.get('protocol', '')}"
+            )
+
+        self.log(
+            f"📄 Perfil: "
+            f"{self.current_profile.name}"
+        )
+
+        self.log(
+            "========================================"
+        )
+
+        # ========================================================
+        # IR PARA PREPARAÇÃO
+        # ========================================================
+
+        self.after(
+            0,
+            self.show_connect_screen
+        )
+
+    def show_connect_screen(self):
+        self.stop_vpn_ping_monitor()
+        self.clear()
+
+        server = getattr(
+            self,
+            "selected_vpn_server",
+            None
+        )
+
+        server_name = (
+            server["name"]
+            if server
+            else "VPN selecionada"
+        )
+
+        server_host = (
+            server["server"]
+            if server
+            else ""
+        )
+
+        ping = (
+            server.get("ping")
+            if server
+            else None
+        )
 
         ctk.CTkLabel(
             self.container,
@@ -4440,45 +7550,41 @@ class OpenDisApp(ctk.CTk):
             ),
             text_color="#cccccc"
         ).pack(
-            pady=(45, 5)
+            pady=(32, 5)
         )
 
         ctk.CTkLabel(
             self.container,
             text=(
-                "Clique em Iniciar para:\n"
-                "Conectar VPN\n"
-                "Abrir Discord\n"
-                "Aguardar conexão\n"
-                "Desconectar VPN\n"
-                "Estabilizar Discord"
+                f"VPN: {server_name}\n"
+                f"{server_host}\n"
+                f"Ping mais recente: {ping} ms"
+                if ping is not None
+                else
+                f"VPN: {server_name}\n"
+                f"{server_host}"
             ),
             font=ctk.CTkFont(
-                size=13
+                size=13,
+                weight="bold"
             ),
             text_color="#a0a0b0",
             justify="center"
         ).pack(
-            pady=(10, 20)
+            pady=(5, 12)
         )
-
-        # ========================================================
-        # LOG
-        # ========================================================
 
         self.log_text = ctk.CTkTextbox(
             self.container,
             width=360,
-            height=120,
-            font=ctk.CTkFont(
-                size=12
-            ),
+            height=150,
+            font=ctk.CTkFont(size=12),
             fg_color="#12121a",
             text_color="#8e9297"
         )
 
         self.log_text.pack(
-            pady=(5, 10)
+            pady=(5, 8)
         )
 
         self.log_text.insert(
@@ -4489,10 +7595,6 @@ class OpenDisApp(ctk.CTk):
         self.log_text.configure(
             state="disabled"
         )
-
-        # ========================================================
-        # PORCENTAGEM
-        # ========================================================
 
         self.progress_label = ctk.CTkLabel(
             self.container,
@@ -4505,12 +7607,8 @@ class OpenDisApp(ctk.CTk):
         )
 
         self.progress_label.pack(
-            pady=(5, 2)
+            pady=(4, 2)
         )
-
-        # ========================================================
-        # BARRA DE PROGRESSO
-        # ========================================================
 
         self.progress_bar = ctk.CTkProgressBar(
             self.container,
@@ -4519,17 +7617,10 @@ class OpenDisApp(ctk.CTk):
             mode="determinate"
         )
 
-        self.progress_bar.set(
-            0
-        )
-
+        self.progress_bar.set(0)
         self.progress_bar.pack(
-            pady=(0, 10)
+            pady=(0, 8)
         )
-
-        # ========================================================
-        # BOTÃO PRINCIPAL
-        # ========================================================
 
         self.start_btn = ctk.CTkButton(
             self.container,
@@ -4537,34 +7628,46 @@ class OpenDisApp(ctk.CTk):
             command=self.run_unlock,
             fg_color="#5865F2",
             hover_color="#4752C4",
-            height=50,
+            height=48,
             font=ctk.CTkFont(
-                size=18,
+                size=17,
                 weight="bold"
             ),
-            corner_radius=25
+            corner_radius=24
         )
 
         self.start_btn.pack(
-            pady=10
+            pady=(8, 5)
         )
 
-        # ========================================================
-        # STATUS FINAL
-        # ========================================================
+        self.stop_vpn_btn = ctk.CTkButton(
+            self.container,
+            text="⛔ FECHAR E ENCERRAR VPN",
+            command=self.request_shutdown_and_exit,
+            fg_color="#ed4245",
+            hover_color="#c03538",
+            height=40,
+            width=300,
+            font=ctk.CTkFont(
+                size=13,
+                weight="bold"
+            ),
+            corner_radius=20
+        )
+
+        # Só aparece quando a operação estiver concluída.
 
         self.final_status = ctk.CTkLabel(
             self.container,
             text="",
-            font=ctk.CTkFont(
-                size=14
-            ),
+            font=ctk.CTkFont(size=14),
             text_color="#cccccc"
         )
 
         self.final_status.pack(
-            pady=5
+            pady=4
         )
+
         self.activity_bar = ctk.CTkProgressBar(
             self.container,
             width=160,
@@ -4573,53 +7676,14 @@ class OpenDisApp(ctk.CTk):
         )
 
         self.activity_bar.pack(
-            pady=(0, 8)
+            pady=(0, 6)
         )
-
-
-        # ========================================================
-        # ESTADO INICIAL
-        # ========================================================
 
         self.set_progress(
             0,
             "Aguardando início..."
         )
 
-    def bring_to_front(self):
-        """
-        Traz o OpenDis para frente depois que o Discord foi aberto
-        e a VPN foi desconectada.
-
-        Não recria a interface e não limpa o log.
-        """
-
-        try:
-
-            self.deiconify()
-
-            self.lift()
-
-            # Coloca temporariamente acima das outras janelas
-            self.attributes(
-                "-topmost",
-                True
-            )
-
-            self.focus_force()
-
-            # Depois remove o topmost para não deixar
-            # o OpenDis permanentemente sobre todas as janelas.
-            self.after(
-                1200,
-                lambda: self.attributes(
-                    "-topmost",
-                    False
-                )
-            )
-
-        except Exception:
-            pass
 
     def set_progress(
             self,
@@ -4730,12 +7794,18 @@ class OpenDisApp(ctk.CTk):
         # ========================================================
 
     def random_vpn_ui(self):
+        """
+        Busca todos os servidores VPNBook,
+        mede o ping inicial e abre a tela de atualização ao vivo.
+        """
+
+        self.stop_vpn_ping_monitor()
 
         try:
 
             self.random_vpn_button.configure(
                 state="disabled",
-                text="🔄 Obtendo VPN..."
+                text="🔄 TESTANDO SERVIDORES..."
             )
 
             self.save_vpnbook_checkbox.configure(
@@ -4746,140 +7816,83 @@ class OpenDisApp(ctk.CTk):
             pass
 
         threading.Thread(
-            target=self._random_vpn_worker,
+            target=self._scan_vpnbook_servers,
             daemon=True
         ).start()
 
-    def _random_vpn_worker(self):
+    def _scan_vpnbook_servers(self):
+        """
+        Testa todos os servidores configurados no VPNBook.
+        """
 
         try:
 
-            # ----------------------------------------------------
-            # Verificar opção guardar
-            # ----------------------------------------------------
+            servers = []
 
-            save_network = True
+            for base_server in VPNBOOK_SERVERS:
 
-            try:
-
-                save_network = bool(
-                    self.save_vpnbook_var.get()
+                server = dict(
+                    base_server
                 )
 
-            except Exception:
+                host = server["server"]
 
-                pass
+                self.after(
+                    0,
+                    lambda h=host:
+                    self.log(
+                        f"📡 Testando ping: {h}"
+                    )
+                )
+
+                ping = ping_vpn_server(
+                    host
+                )
+
+                server["ping"] = ping
+
+                if ping is None:
+
+                    self.after(
+                        0,
+                        lambda h=host:
+                        self.log(
+                            f"🔴 {h}: sem resposta"
+                        )
+                    )
+
+                else:
+
+                    self.after(
+                        0,
+                        lambda h=host,
+                               p=ping:
+                        self.log(
+                            f"📡 {h}: {p} ms"
+                        )
+                    )
+
+                servers.append(
+                    server
+                )
 
             # ----------------------------------------------------
-            # Informar o que está fazendo
+            # Ordenar pelo menor ping
             # ----------------------------------------------------
 
-            self.after(
-                0,
-                lambda:
-                self.log(
-                    "🌐 VPNBook: US Server 1"
+            servers.sort(
+                key=lambda item:
+                (
+                    item["ping"]
+                    if item["ping"] is not None
+                    else 999999
                 )
             )
 
             self.after(
                 0,
-                lambda:
-                self.log(
-                    "🔌 Protocolo: TCP 443"
-                )
-            )
-
-            # ----------------------------------------------------
-            # Procurar perfil salvo
-            # ----------------------------------------------------
-
-            profile = None
-
-            if save_network:
-                profile = (
-                    vpnbook_find_profile(
-                        VPNBOOK_DEFAULT_SERVER,
-                        VPNBOOK_DEFAULT_PROTOCOL
-                    )
-                )
-
-            # ----------------------------------------------------
-            # Perfil já existente
-            # ----------------------------------------------------
-
-            if profile:
-
-                self.after(
-                    0,
-                    lambda p=profile:
-                    self.log(
-                        f"💾 Rede salva encontrada: {p.name}"
-                    )
-                )
-
-                username, password = (
-                    vpnbook_get_credentials()
-                )
-
-                if not username or not password:
-                    raise RuntimeError(
-                        "Não foi possível obter "
-                        "a senha atual do VPNBook."
-                    )
-
-                result = (
-                    profile,
-                    username,
-                    password
-                )
-
-            # ----------------------------------------------------
-            # Baixar novo perfil
-            # ----------------------------------------------------
-
-            else:
-
-                self.after(
-                    0,
-                    lambda:
-                    self.log(
-                        "📥 Baixando configuração OpenVPN..."
-                    )
-                )
-
-                result = (
-                    vpnbook_get_random_profile(
-                        use_saved=False
-                    )
-                )
-
-                profile, username, password = (
-                    result
-                )
-
-                self.after(
-                    0,
-                    lambda p=profile:
-                    self.log(
-                        f"✅ .ovpn baixado: {p.name}"
-                    )
-                )
-
-            # ----------------------------------------------------
-            # Atualizar GUI
-            # ----------------------------------------------------
-
-            self.after(
-                0,
-                lambda p=profile,
-                       u=username,
-                       pw=password:
-                self._random_vpn_success(
-                    p,
-                    u,
-                    pw
-                )
+                lambda s=servers:
+                self.show_vpn_selection_screen(s)
             )
 
         except Exception as e:
@@ -4889,80 +7902,8 @@ class OpenDisApp(ctk.CTk):
             self.after(
                 0,
                 lambda msg=error:
-                self._random_vpn_error(
-                    msg
-                )
+                self._random_vpn_error(msg)
             )
-
-    def _random_vpn_success(
-            self,
-            profile,
-            username,
-            password
-    ):
-
-        # ----------------------------------------------------
-        # Perfil atual
-        # ----------------------------------------------------
-
-        self.current_profile = Path(
-            profile
-        )
-
-        # ----------------------------------------------------
-        # Credenciais
-        # ----------------------------------------------------
-
-        self.ovpn_username = (
-            username
-        )
-
-        self.ovpn_password = (
-            password
-        )
-
-        # ----------------------------------------------------
-        # Origem
-        # ----------------------------------------------------
-
-        self.is_vpnbook_profile = True
-
-        # ----------------------------------------------------
-        # Mostrar informações
-        # ----------------------------------------------------
-
-        try:
-
-            self.log(
-                "🎲 VPNBook preparada."
-            )
-
-            self.log(
-                "🇺🇸 Servidor: US Server 1"
-            )
-
-            self.log(
-                "🔌 Protocolo: TCP 443"
-            )
-
-            self.log(
-                f"📄 Perfil: {self.current_profile.name}"
-            )
-
-            self.log(
-                f"👤 Usuário: {username}"
-            )
-
-        except Exception:
-
-            pass
-
-        # ----------------------------------------------------
-        # Continuar
-        # ----------------------------------------------------
-
-        self.show_connect_screen()
-
     def _random_vpn_error(
             self,
             error
@@ -5019,6 +7960,9 @@ class OpenDisApp(ctk.CTk):
 
             return
 
+        self.operation_stop_event.clear()
+        self.shutdown_in_progress = False
+
         # ========================================================
         # BLOQUEAR BOTÃO
         # ========================================================
@@ -5057,37 +8001,44 @@ class OpenDisApp(ctk.CTk):
 
     def _run_unlock(self):
         """
-        Execução principal do OpenDis.
+        Fluxo principal:
 
-        Fluxo:
+            1. Localiza OpenVPN
+            2. Localiza Discord
+            3. Valida perfil .ovpn
+            4. Obtém IP inicial
+            5. Prepara credenciais
+            6. Inicia OpenVPN
+            7. Aguarda túnel
+            8. Confirma IP da VPN
+            9. Prepara isolamento App-VPN
+            10. Inicia Discord
+            11. Obtém PID(s) do Discord
+            12. Anexa Discord ao engine
+            13. Verifica isolamento
+            14. Aguarda estabilização
+            15. Mantém VPN conectada
+            16. Finaliza operação
 
-            detectar OpenVPN
-            detectar Discord
-            validar .ovpn
-            criar log
-            conectar OpenVPN
-            aguardar Initialization Sequence Completed
-            confirmar mudança de IP
-            abrir Discord
-            aguardar Discord
-            desconectar VPN
-            voltar para tela principal
-            aguardar estabilização do Discord
-            mostrar CONCLUIR E FECHAR
-
+        Em caso de erro:
+            - limpa o engine
+            - desconecta a VPN se necessário
+            - mantém o log para diagnóstico
+            - remove credenciais temporárias
         """
 
         vpn_connected = False
         credentials_file = None
+        runtime_profile = None
         process = None
         log_handle = None
         keep_log_file = False
 
         try:
 
-            # ====================================================
+            # ========================================================
             # 1. LOCALIZAR OPENVPN
-            # ====================================================
+            # ========================================================
 
             self.after(
                 0,
@@ -5112,9 +8063,9 @@ class OpenDisApp(ctk.CTk):
                 )
             )
 
-            # ====================================================
+            # ========================================================
             # 2. LOCALIZAR DISCORD
-            # ====================================================
+            # ========================================================
 
             self.after(
                 0,
@@ -5139,9 +8090,83 @@ class OpenDisApp(ctk.CTk):
                 )
             )
 
-            # ====================================================
-            # 3. PERFIL OVPN
-            # ====================================================
+            if discord_process_running():
+                raise RuntimeError(
+                    "O Discord já está aberto.\n\n"
+                    "Feche completamente o Discord antes de iniciar "
+                    "o OpenDis. Isso garante que nenhuma conexão antiga "
+                    "permaneça fora da VPN."
+                )
+
+            # ========================================================
+            # 2.1 PREPARAR DEPENDÊNCIA APP-VPN ANTES DA VPN
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    17,
+                    "Preparando componente App-VPN..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "📦 Verificando componente App-VPN..."
+                )
+            )
+
+            singbox_path = ensure_singbox_ready()
+
+            self.after(
+                0,
+                lambda p=singbox_path:
+                self.log(
+                    f"✅ App-VPN pronto: {p.name}"
+                )
+            )
+
+            # ========================================================
+            # 2.2 IDENTIFICAR A WAN ORIGINAL
+            # ========================================================
+
+            wan_adapter = get_default_ipv4_adapter()
+
+            if not wan_adapter:
+                raise RuntimeError(
+                    "Não foi possível identificar a interface "
+                    "de Internet original do Windows."
+                )
+
+            self.after(
+                0,
+                lambda a=wan_adapter:
+                self.log(
+                    f"🌐 WAN original: {a['name']} "
+                    f"({a.get('ipv4', 'sem IPv4')})"
+                )
+            )
+
+            # Snapshot das interfaces ativas antes do OpenVPN.
+            baseline_adapters = get_windows_network_adapters()
+
+            baseline_if_indexes = {
+                int(item["if_index"])
+                for item in baseline_adapters
+                if item.get("if_index") is not None
+            }
+
+            # Snapshot das rotas default antes de qualquer perfil VPN.
+            # O caminho manual usa isto como fail-safe para restaurar
+            # imediatamente a WAN caso o servidor tente instalar def1.
+            baseline_default_routes = get_windows_default_ipv4_routes()
+
+            # ========================================================
+            # 3. PERFIL VPN
+            # ========================================================
 
             self.after(
                 0,
@@ -5162,9 +8187,7 @@ class OpenDisApp(ctk.CTk):
                     "Nenhum perfil .ovpn selecionado."
                 )
 
-            profile = Path(
-                profile
-            )
+            profile = Path(profile)
 
             if not profile.exists():
                 raise RuntimeError(
@@ -5180,13 +8203,57 @@ class OpenDisApp(ctk.CTk):
                 0,
                 lambda p=profile.name:
                 self.log(
-                    f"📄 Perfil: {p}"
+                    f"📄 Perfil VPN: {p}"
                 )
             )
 
-            # ====================================================
-            # 4. IP INICIAL
-            # ====================================================
+            # ========================================================
+            # 4. SERVIDOR SELECIONADO
+            # ========================================================
+
+            selected_server = getattr(
+                self,
+                "selected_vpn_server",
+                None
+            )
+
+            if selected_server:
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "========================================"
+                    )
+                )
+
+                self.after(
+                    0,
+                    lambda s=selected_server:
+                    self.log(
+                        f"🌐 VPN: {s.get('name', 'VPN')}"
+                    )
+                )
+
+                self.after(
+                    0,
+                    lambda s=selected_server:
+                    self.log(
+                        f"🔌 Host: {s.get('server', '')}"
+                    )
+                )
+
+                self.after(
+                    0,
+                    lambda s=selected_server:
+                    self.log(
+                        f"📡 Ping medido: "
+                        f"{s.get('ping', 'N/A')} ms"
+                    )
+                )
+
+            # ========================================================
+            # 5. IP INICIAL
+            # ========================================================
 
             self.after(
                 0,
@@ -5196,62 +8263,64 @@ class OpenDisApp(ctk.CTk):
                 )
             )
 
-            self.current_public_ip = get_public_ip(
-                timeout=10
+            self.current_public_ip = get_public_ip_retry(
+                timeout=8,
+                attempts=5,
+                delay=1.0
             )
 
-            if self.current_public_ip:
-                self.after(
-                    0,
-                    lambda ip=self.current_public_ip:
-                    self.log(
-                        f"🌐 IP inicial: {ip}"
-                    )
-                )
+            if not self.current_public_ip:
 
-            # ====================================================
-            # 5. PREPARAÇÃO DO OPENVPN
-            # ====================================================
+                raise RuntimeError(
+                    "Não foi possível confirmar o IP público "
+                    "da conexão normal antes de iniciar a VPN.\n\n"
+                    "O OpenDis cancelou a operação porque não "
+                    "consegue validar o split tunnel com segurança."
+                )
 
             self.after(
                 0,
-                lambda: self.set_progress(
-                    30,
-                    "Preparando conexão VPN..."
+                lambda ip=self.current_public_ip:
+                self.log(
+                    f"🌐 IP inicial: {ip}"
                 )
             )
 
+            # ========================================================
+            # 6. PREPARAR CREDENCIAIS
+            # ========================================================
 
-            command = [
-                openvpn,
-                "--config",
-                str(profile),
-                "--disable-dco",
-            ]
+            username = getattr(
+                self,
+                "ovpn_username",
+                ""
+            )
 
-            if profile_requires_credentials(profile):
+            password = getattr(
+                self,
+                "ovpn_password",
+                ""
+            )
 
-                username = getattr(
-                    self,
-                    "ovpn_username",
-                    ""
-                )
+            if username and password:
 
-                password = getattr(
-                    self,
-                    "ovpn_password",
-                    ""
-                )
-
-                if not username or not password:
-                    raise RuntimeError(
-                        "Este perfil exige usuário e senha."
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "🔐 Credenciais disponíveis."
                     )
+                )
 
-                credentials_file = (
-                        LOG_DIR
-                        /
-                        f".credentials_{os.getpid()}_{int(time.time())}.tmp"
+                fd, credentials_path = tempfile.mkstemp(
+                    prefix="opendis_",
+                    suffix=".txt"
+                )
+
+                os.close(fd)
+
+                credentials_file = Path(
+                    credentials_path
                 )
 
                 credentials_file.write_text(
@@ -5260,15 +8329,320 @@ class OpenDisApp(ctk.CTk):
                 )
 
                 try:
-
                     os.chmod(
                         credentials_file,
                         0o600
                     )
-
                 except Exception:
                     pass
 
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "🔐 Arquivo temporário de credenciais criado."
+                    )
+                )
+
+            # ========================================================
+            # 7. PERFIL RUNTIME + COMANDO OPENVPN
+            # ========================================================
+            #
+            # O perfil original nunca é alterado. Criamos uma cópia
+            # temporária AO LADO dele para preservar caminhos relativos
+            # de CA/cert/key/auth files.
+            #
+            # Removemos diretivas capazes de transformar a VPN em rota
+            # global ou trocar o DNS/WAN. No fluxo manual a sanitização
+            # é mais rígida: nenhuma rota declarada pelo perfil é instalada.
+            # O fluxo VPNBook mantém o comportamento anterior.
+            # ========================================================
+
+            self.after(
+                0,
+                lambda: self.set_progress(
+                    30,
+                    "Iniciando conexão VPN..."
+                )
+            )
+
+            manual_profile = not bool(
+                getattr(
+                    self,
+                    "is_vpnbook_profile",
+                    False
+                )
+            )
+
+            if manual_profile:
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "🛡️ Perfil manual: modo split-tunnel estrito."
+                    )
+                )
+
+            try:
+                original_text = profile.read_text(
+                    encoding="utf-8",
+                    errors="ignore"
+                )
+
+                sanitized_lines = []
+                removed_runtime_options = []
+
+                for original_line in original_text.splitlines():
+
+                    stripped = original_line.strip()
+                    lowered = stripped.lower()
+
+                    if not stripped or stripped.startswith(("#", ";")):
+                        sanitized_lines.append(original_line)
+                        continue
+
+                    # ------------------------------------------------
+                    # O OpenDis controla estas opções em runtime.
+                    # ------------------------------------------------
+
+                    first_token = lowered.split(None, 1)[0]
+
+                    if first_token in {
+                        "redirect-gateway",
+                        "redirect-private",
+                        "route-nopull",
+                        "route-noexec",
+                        "block-outside-dns",
+                        "block-ipv6",
+                        "pull-filter",
+                    }:
+                        removed_runtime_options.append(first_token)
+                        continue
+
+                    # Não permitir que o perfil troque DNS do Windows.
+                    if lowered.startswith("dhcp-option "):
+                        removed_runtime_options.append("dhcp-option")
+                        continue
+
+                    if (
+                        manual_profile
+                        and
+                        first_token in {
+                            "register-dns",
+                            "dhcp-renew",
+                            "up",
+                            "down",
+                            "route-up",
+                            "route-pre-down",
+                            "ipchange",
+                            "plugin",
+                            "script-security",
+                            "up-delay",
+                            "up-restart",
+                            "down-pre",
+                        }
+                    ):
+                        removed_runtime_options.append(first_token)
+                        continue
+
+                    # O Discord deste fluxo é IPv4. Rotas IPv6 do perfil
+                    # não devem alterar o restante do computador.
+                    if lowered.startswith("route-ipv6 "):
+                        removed_runtime_options.append("route-ipv6")
+                        continue
+
+                    # Perfil manual: nenhuma rota declarada pelo .ovpn
+                    # pode ser instalada no Windows. O bridge do sing-box
+                    # envia o Discord diretamente pela interface OpenVPN,
+                    # então não precisamos transformar a VPN em gateway do PC.
+                    #
+                    # VPNBook mantém o comportamento anterior: só retiramos
+                    # default/def1, preservando rotas específicas do perfil.
+                    if lowered.startswith("route "):
+
+                        if manual_profile:
+                            removed_runtime_options.append("route")
+                            continue
+
+                        parts = re.split(r"\s+", lowered)
+
+                        network = parts[1] if len(parts) > 1 else ""
+                        netmask = parts[2] if len(parts) > 2 else ""
+
+                        is_full_default = (
+                            network in {"default", "0.0.0.0"}
+                            and
+                            netmask in {"", "default", "0.0.0.0"}
+                        )
+
+                        is_def1_half = (
+                            (
+                                network == "0.0.0.0"
+                                and netmask == "128.0.0.0"
+                            )
+                            or
+                            (
+                                network == "128.0.0.0"
+                                and netmask == "128.0.0.0"
+                            )
+                        )
+
+                        if is_full_default or is_def1_half:
+                            removed_runtime_options.append("route-default")
+                            continue
+
+                    # Se vamos fornecer auth por CLI, removemos a diretiva
+                    # do perfil runtime para não haver duas fontes.
+                    if (
+                        credentials_file
+                        and lowered.startswith("auth-user-pass")
+                    ):
+                        removed_runtime_options.append("auth-user-pass")
+                        continue
+
+                    sanitized_lines.append(original_line)
+
+                fd, runtime_profile_path = tempfile.mkstemp(
+                    prefix=".opendis_runtime_",
+                    suffix=".ovpn",
+                    dir=str(profile.parent)
+                )
+                os.close(fd)
+
+                runtime_profile = Path(runtime_profile_path)
+
+                runtime_profile.write_text(
+                    "\n".join(sanitized_lines) + "\n",
+                    encoding="utf-8"
+                )
+
+                if removed_runtime_options:
+                    removed_text = ", ".join(
+                        sorted(set(removed_runtime_options))
+                    )
+
+                    self.after(
+                        0,
+                        lambda t=removed_text:
+                        self.log(
+                            f"🛡️ Perfil runtime sanitizado: {t}"
+                        )
+                    )
+
+            except Exception as e:
+                raise RuntimeError(
+                    "Não foi possível criar o perfil OpenVPN "
+                    f"temporário seguro:\n{e}"
+                )
+
+            command = [
+                str(openvpn),
+                "--config",
+                str(runtime_profile),
+
+                # Bloqueia TODAS as rotas/DNS empurradas pelo servidor.
+                # As propriedades do TUN/TAP (ifconfig/topology) continuam
+                # sendo recebidas, conforme comportamento do OpenVPN.
+                "--route-nopull",
+
+                # Defesa adicional para redirect padrão, inclusive em
+                # servidores/perfis com comportamento diferente.
+                "--pull-filter",
+                "ignore",
+                "redirect-gateway",
+
+                "--pull-filter",
+                "ignore",
+                "redirect-private",
+
+                "--pull-filter",
+                "ignore",
+                "dhcp-option",
+
+                "--pull-filter",
+                "ignore",
+                "block-outside-dns",
+
+                "--pull-filter",
+                "ignore",
+                "block-ipv6",
+
+                "--pull-filter",
+                "ignore",
+                "route-ipv6",
+
+                # Não manter usuário/senha em cache após autenticação.
+                "--auth-nocache",
+
+                # VPNBook/net30 atualmente precisa do TAP convencional.
+                "--disable-dco",
+            ]
+
+            if manual_profile:
+                # ----------------------------------------------------
+                # PERFIL .OVPN MANUAL
+                # ----------------------------------------------------
+                # O servidor NÃO pode instalar redirect-gateway/def1,
+                # DNS ou rotas próprias. Porém o bridge L3 do sing-box
+                # precisa que a interface OpenVPN tenha um caminho de
+                # egress para destinos públicos.
+                #
+                # Por isso criamos SOMENTE uma default-route controlada
+                # com métrica 5000. Como ela possui o mesmo prefixo /0
+                # da WAN, a rota WAN normal (métrica muito menor) vence
+                # para o restante do computador. O fail-safe logo após
+                # a conexão remove qualquer /1 ou /0 de métrica baixa.
+                command.extend(
+                    [
+                        "--pull-filter",
+                        "ignore",
+                        "redirect",
+
+                        "--pull-filter",
+                        "ignore",
+                        "register-dns",
+
+                        "--pull-filter",
+                        "ignore",
+                        "dns",
+
+                        # Rota de egress exclusiva para o bridge.
+                        # NÃO vira a rota preferida do Windows.
+                        "--route",
+                        "0.0.0.0",
+                        "0.0.0.0",
+                        "vpn_gateway",
+                        "5000",
+                    ]
+                )
+
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "✅ Perfil manual com rota de egress VPN "
+                        "controlada (métrica 5000)."
+                    )
+                )
+
+            else:
+                # ----------------------------------------------------
+                # VPNBOOK
+                # ----------------------------------------------------
+                # Mantém exatamente a rota de egress que já funciona
+                # no caminho VPNBook existente. A métrica alta evita
+                # que ela substitua a rota principal nesse perfil.
+                command.extend(
+                    [
+                        "--route",
+                        "0.0.0.0",
+                        "0.0.0.0",
+                        "vpn_gateway",
+                        "5000",
+                    ]
+                )
+
+            if credentials_file:
                 command.extend(
                     [
                         "--auth-user-pass",
@@ -5276,35 +8650,43 @@ class OpenDisApp(ctk.CTk):
                     ]
                 )
 
-            # ====================================================
-            # 6. PREPARAR PROCESSO
-            # ====================================================
-
-            creation_flags = 0
-            startupinfo = None
-
-            if os.name == "nt":
-                creation_flags = (
-                        subprocess.CREATE_NO_WINDOW
-                        |
-                        subprocess.CREATE_NEW_PROCESS_GROUP
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🚀 Iniciando OpenVPN..."
                 )
+            )
 
-                startupinfo = subprocess.STARTUPINFO()
-
-                startupinfo.dwFlags |= (
-                    subprocess.STARTF_USESHOWWINDOW
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🖥️ OpenVPN será mantido ativo até o encerramento."
                 )
+            )
 
-                startupinfo.wShowWindow = (
-                    subprocess.SW_HIDE
-                )
+            # ========================================================
+            # 8. CRIAR LOG OPENVPN
+            # ========================================================
+            #
+            # CORREÇÃO DO BUG:
+            #
+            # self.vpn_log_file era None porque a criação
+            # do caminho estava comentada.
+            #
+            # Agora garantimos que ele seja um Path válido.
+            # ========================================================
 
-            # ====================================================
-            # 7. LOG OPENVPN
-            # ====================================================
+            self.vpn_log_file = (
+                    LOG_DIR
+                    / f"openvpn_{int(time.time())}_{os.getpid()}.log"
+            )
 
-            self.vpn_log_file = create_log_file()
+            self.vpn_log_file.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
 
             log_handle = open(
                 self.vpn_log_file,
@@ -5313,45 +8695,64 @@ class OpenDisApp(ctk.CTk):
                 errors="replace"
             )
 
-            # ====================================================
-            # 8. INICIAR OPENVPN
-            # ====================================================
-
             self.after(
                 0,
-                lambda: self.set_progress(
-                    35,
-                    "Conectando à VPN..."
+                lambda p=self.vpn_log_file:
+                self.log(
+                    f"📝 Log OpenVPN: {p.name}"
                 )
             )
 
-            self.after(
-                0,
-                lambda: self.log(
-                    "🔌 Iniciando OpenVPN..."
+            # ========================================================
+            # 9. INICIAR OPENVPN
+            # ========================================================
+
+            creationflags = 0
+
+            if os.name == "nt":
+                creationflags = (
+                        subprocess.CREATE_NEW_PROCESS_GROUP
+                        |
+                        subprocess.CREATE_NO_WINDOW
                 )
-            )
 
             process = subprocess.Popen(
                 command,
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
-                creationflags=creation_flags,
-                startupinfo=startupinfo,
-                cwd=str(profile.parent)
+                creationflags=creationflags
             )
 
             self.vpn_process = process
-
-            # ====================================================
-            # 9. AGUARDAR VPN
-            # ====================================================
+            self.operation_active = True
 
             self.after(
                 0,
-                lambda: self.log(
-                    "⏳ Aguardando conexão VPN..."
+                lambda p=process.pid:
+                self.log(
+                    f"🔌 OpenVPN PID: {p}"
+                )
+            )
+
+            # ========================================================
+            # 10. AGUARDAR VPN
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    40,
+                    "Conectando à VPN..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "⏳ Aguardando Initialization Sequence Completed..."
                 )
             )
 
@@ -5361,323 +8762,741 @@ class OpenDisApp(ctk.CTk):
                     WAIT_VPN_TIMEOUT
             )
 
-            connection_confirmed = False
+            vpn_ready = False
 
             while time.time() < vpn_deadline:
 
+                if self.operation_stop_event.is_set():
+                    raise RuntimeError(
+                        "Operação cancelada pelo usuário."
+                    )
+
                 if process.poll() is not None:
                     raise RuntimeError(
-                        "OpenVPN encerrou antes de concluir a conexão.\n"
-                        "Feche o programa e abra novamente..\n\n"
-                        "Considere reiniciar o OpenVPN ou o Computador\n\n"
+                        "O OpenVPN encerrou antes de "
+                        "estabelecer a conexão."
                     )
 
                 try:
 
-                    with open(
-                            self.vpn_log_file,
-                            "r",
+                    log_text = (
+                        self.vpn_log_file.read_text(
                             encoding="utf-8",
-                            errors="ignore"
-                    ) as f:
-
-                        log_content = f.read()
+                            errors="replace"
+                        )
+                    )
 
                 except Exception:
 
-                    log_content = ""
+                    log_text = ""
 
                 if (
                         "Initialization Sequence Completed"
-                        in log_content
+                        in log_text
                 ):
-                    connection_confirmed = True
-
-                    break
-
-                fatal_patterns = {
-                    "Exiting due to fatal error": (
-                        "Erro inesperado na conexão VPN.\n"
-                        "O OpenVPN encontrou um problema e não conseguiu iniciar a conexão."
-                    ),
-
-                    "AUTH_FAILED": (
-                        "Usuário ou senha incorretos.\n"
-                        "Verifique suas credenciais da VPN e tente novamente."
-                    ),
-
-                    "TLS Error": (
-                        "Não foi possível estabelecer comunicação segura com o servidor VPN.\n"
-                        "Tente outro servidor ou perfil .ovpn."
-                    ),
-
-                    "Cannot open TUN/TAP": (
-                        "O adaptador de rede da VPN não pôde ser iniciado.\n"
-                        "Verifique a instalação do OpenVPN e tente novamente."
-                    ),
-
-                    "All TAP-Windows adapters": (
-                        "Nenhum adaptador de rede VPN está disponível.\n"
-                        "Reinstale ou repare o OpenVPN."
-                    ),
-
-                    "Options error:": (
-                        "O perfil VPN possui uma configuração inválida ou incompatível.\n"
-                        "Verifique o arquivo .ovpn selecionado."
-                    ),
-
-                    "Connection failed": (
-                        "Não foi possível conectar ao servidor VPN.\n"
-                        "O servidor pode estar indisponível ou o perfil pode estar com problema."
-                    ),
-                }
-
-                fatal_error = None
-                user_error = None
-
-                for pattern, message in fatal_patterns.items():
-
-                    if pattern.lower() in log_content.lower():
-                        fatal_error = pattern
-                        user_error = message
-
-                        break
-
-                if fatal_error:
-                    raise RuntimeError(
-                        user_error
-                    )
-
-                if fatal_error:
-                    raise RuntimeError(
-                        f"OpenVPN falhou: {fatal_error}"
-                    )
-
-                # progresso visual durante a conexão
-                elapsed = (
-                        WAIT_VPN_TIMEOUT
-                        -
-                        max(
-                            0,
-                            vpn_deadline - time.time()
-                        )
-                )
-
-                progress = int(
-                    35
-                    +
-                    (
-                            elapsed
-                            /
-                            WAIT_VPN_TIMEOUT
-                    )
-                    *
-                    20
-                )
-
-                self.after(
-                    0,
-                    lambda p=progress:
-                    self.set_progress(
-                        p,
-                        "Estabelecendo túnel VPN..."
-                    )
-                )
-
-                time.sleep(
-                    0.25
-                )
-
-            if not connection_confirmed:
-                raise RuntimeError(
-                    "Tempo limite aguardando conexão VPN."
-                )
-
-            # ====================================================
-            # 10. VPN CONECTADA
-            # ====================================================
-
-            vpn_connected = True
-
-            self.after(
-                0,
-                lambda: self.set_progress(
-                    55,
-                    "VPN conectada."
-                )
-            )
-
-            self.after(
-                0,
-                lambda: self.log(
-                    "✅ OpenVPN conectado."
-                )
-            )
-
-            # ====================================================
-            # 11. CONFIRMAR IP
-            # ====================================================
-
-            self.after(
-                0,
-                lambda: self.set_progress(
-                    60,
-                    "Confirmando alteração de rede..."
-                )
-            )
-
-            self.after(
-                0,
-                lambda: self.log(
-                    "🌐 Confirmando alteração de rede..."
-                )
-            )
-
-            new_ip = None
-
-            ip_deadline = (
-                    time.time()
-                    +
-                    IP_CHECK_TIMEOUT
-            )
-
-            while time.time() < ip_deadline:
-
-                try:
-
-                    new_ip = get_public_ip(
-                        timeout=5
-                    )
-
-                except Exception:
-
-                    new_ip = None
-
-                if new_ip:
-
-                    if (
-                            not self.current_public_ip
-                            or
-                            new_ip != self.current_public_ip
-                    ):
-                        break
-
-                time.sleep(
-                    1
-                )
-
-            if new_ip:
-
-                self.after(
-                    0,
-                    lambda ip=new_ip:
-                    self.log(
-                        f"🌐 IP atual: {ip}"
-                    )
-                )
-
-                self.after(
-                    0,
-                    lambda: self.log(
-                        "✅ Rede VPN confirmada."
-                    )
-                )
-
-            else:
-
-                self.after(
-                    0,
-                    lambda: self.log(
-                        "⚠️ Não foi possível confirmar o IP externo."
-                    )
-                )
-
-            # ====================================================
-            # 12. ABRIR DISCORD
-            # ====================================================
-
-            self.after(
-                0,
-                lambda: self.set_progress(
-                    70,
-                    "Abrindo Discord..."
-                )
-            )
-
-            self.after(
-                0,
-                lambda: self.log(
-                    "💬 Abrindo Discord..."
-                )
-            )
-
-            subprocess.Popen(
-                [discord],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                creationflags=(
-                    subprocess.CREATE_NO_WINDOW
-                    if os.name == "nt"
-                    else 0
-                )
-            )
-
-            # ====================================================
-            # 13. CONFIRMAR DISCORD
-            # ====================================================
-
-            discord_deadline = (
-                    time.time()
-                    +
-                    20
-            )
-
-            discord_found = False
-
-            while time.time() < discord_deadline:
-
-                if discord_process_running():
-                    discord_found = True
-
+                    vpn_ready = True
                     break
 
                 time.sleep(
                     0.5
                 )
 
-            if not discord_found:
+            if not vpn_ready:
                 raise RuntimeError(
-                    "Discord não iniciou corretamente."
+                    "Tempo limite aguardando "
+                    "a conexão VPN."
+                )
+
+            vpn_connected = True
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "========================================"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "✅ Initialization Sequence Completed"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔒 Túnel VPN estabelecido."
+                )
+            )
+
+            # ========================================================
+            # 11. ESTABILIZAÇÃO VPN
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    50,
+                    "Estabilizando VPN..."
+                )
+            )
+
+            time.sleep(
+                2
+            )
+
+            # ========================================================
+            # 11.1 FAIL-SAFE DE ROTA PARA PERFIL MANUAL
+            # ========================================================
+            #
+            # Alguns provedores (ex.: Proton VPN) empurram
+            # redirect-gateway def1. route-nopull + pull-filter devem
+            # impedir a instalação. Mesmo assim removemos explicitamente
+            # qualquer /1 e qualquer /0 de métrica baixa que apareça na
+            # interface VPN, preservando somente a /0 controlada de
+            # métrica 5000 usada pelo bridge do sing-box.
+            #
+            # O fluxo VPNBook NÃO passa por esta rotina.
+            # ========================================================
+
+            if manual_profile:
+
+                manual_vpn_adapter = find_openvpn_adapter(
+                    exclude_if_indexes=baseline_if_indexes
+                )
+
+                if not manual_vpn_adapter:
+                    raise RuntimeError(
+                        "A VPN conectou, mas a interface OpenVPN manual "
+                        "não pôde ser identificada para validar as rotas."
+                    )
+
+                self.after(
+                    0,
+                    lambda a=manual_vpn_adapter:
+                    self.log(
+                        "🛡️ Validando rotas do perfil manual na interface "
+                        f"{a['name']}..."
+                    )
+                )
+
+                route_ok, route_error = restore_manual_wan_routing(
+                    wan_adapter=wan_adapter,
+                    baseline_default_routes=baseline_default_routes,
+                    vpn_adapter=manual_vpn_adapter
+                )
+
+                if not route_ok:
+                    raise RuntimeError(
+                        "Não foi possível garantir a rota WAN original "
+                        "depois de conectar o perfil manual.\n\n"
+                        f"{route_error}"
+                    )
+
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "✅ Def1 bloqueado; egress VPN controlado mantido."
+                    )
+                )
+
+                # Diagnóstico explícito da /0 controlada. Assim o log
+                # confirma que o bridge tem egress pela VPN sem que essa
+                # rota tenha prioridade sobre a WAN normal.
+                current_default_routes = get_windows_default_ipv4_routes()
+                vpn_default_routes = [
+                    item
+                    for item in current_default_routes
+                    if int(item.get("if_index", -1))
+                    == int(manual_vpn_adapter["if_index"])
+                ]
+
+                for vpn_route in vpn_default_routes:
+                    self.after(
+                        0,
+                        lambda r=dict(vpn_route):
+                        self.log(
+                            "🧭 Egress VPN /0: "
+                            f"next-hop={r.get('next_hop', '?')} • "
+                            f"métrica rota={r.get('route_metric', '?')} • "
+                            f"métrica total={r.get('total_metric', '?')}"
+                        )
+                    )
+
+                # Dar um pequeno intervalo para o Windows recalcular
+                # a melhor rota após eventual remoção de def1.
+                time.sleep(0.8)
+
+            # ========================================================
+            # 12. CONFIRMAR QUE A WAN CONTINUA NORMAL
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    55,
+                    "Confirmando isolamento da rota principal..."
+                )
+            )
+
+            wan_after_vpn = get_public_ip_retry(
+                timeout=8,
+                attempts=5,
+                delay=1.0
+            )
+
+            if not wan_after_vpn:
+
+                raise RuntimeError(
+                    "Não foi possível confirmar o IP WAN "
+                    "depois que o túnel OpenVPN foi criado.\n\n"
+                    "O OpenDis cancelou a operação para não "
+                    "arriscar rotear outras aplicações pela VPN."
                 )
 
             self.after(
                 0,
-                lambda: self.set_progress(
+                lambda ip=wan_after_vpn:
+                self.log(
+                    f"🌐 IP do computador após criar túnel: {ip}"
+                )
+            )
+
+            if (
+                wan_after_vpn
+                !=
+                self.current_public_ip
+            ):
+
+                # Perfil manual recebe uma última tentativa fail-closed
+                # de restauração antes de abortar. Isso cobre provedores
+                # que alterem a tabela de rotas alguns instantes depois
+                # do Initialization Sequence Completed.
+                if manual_profile:
+
+                    self.after(
+                        0,
+                        lambda:
+                        self.log(
+                            "⚠️ Alteração WAN detectada; restaurando "
+                            "rota original imediatamente..."
+                        )
+                    )
+
+                    manual_vpn_adapter = find_openvpn_adapter(
+                        exclude_if_indexes=baseline_if_indexes
+                    )
+
+                    if manual_vpn_adapter:
+                        restore_manual_wan_routing(
+                            wan_adapter=wan_adapter,
+                            baseline_default_routes=baseline_default_routes,
+                            vpn_adapter=manual_vpn_adapter
+                        )
+
+                        time.sleep(1.0)
+
+                        repaired_ip = get_public_ip_retry(
+                            timeout=8,
+                            attempts=4,
+                            delay=0.7
+                        )
+
+                        if repaired_ip == self.current_public_ip:
+                            wan_after_vpn = repaired_ip
+
+                            self.after(
+                                0,
+                                lambda ip=repaired_ip:
+                                self.log(
+                                    f"✅ WAN restaurada automaticamente: {ip}"
+                                )
+                            )
+
+                if wan_after_vpn != self.current_public_ip:
+                    raise RuntimeError(
+                        "A rota principal do computador foi alterada "
+                        "pela VPN.\n\n"
+                        f"IP antes: {self.current_public_ip}\n"
+                        f"IP depois: {wan_after_vpn}\n\n"
+                        "O isolamento foi cancelado para evitar que "
+                        "outras aplicações utilizem a VPN."
+                    )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "✅ Rota principal preservada."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "✅ O computador NÃO entrou na VPN."
+                )
+            )
+
+            # ========================================================
+            # 13. PREPARAR ENGINE APP-VPN
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    65,
+                    "Preparando isolamento do Discord..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🛡️ Preparando camada App-VPN..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🛡️ Objetivo: Discord → VPN / restante → WAN."
+                )
+            )
+
+            vpn_engine = getattr(
+                self,
+                "vpn_engine",
+                None
+            )
+
+            if vpn_engine is None:
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "⚠️ Engine WFP ainda não carregado."
+                    )
+                )
+
+                raise RuntimeError(
+                    "Engine WFP/App-VPN não está instalado."
+                )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🛡️ Engine App-VPN detectado."
+                )
+            )
+
+            prepare_method = getattr(
+                vpn_engine,
+                "prepare",
+                None
+            )
+
+            if callable(
+                    prepare_method
+            ):
+                prepare_method(
+                    openvpn_process=process,
+                    profile=profile,
+                    baseline_if_indexes=baseline_if_indexes,
+                    wan_adapter=wan_adapter
+                )
+
+                self.after(
+                    0,
+                    lambda:
+                    self.log(
+                        "🛡️ Engine preparado."
+                    )
+                )
+
+            # ========================================================
+            # 13.1 CONFIRMAR WAN DEPOIS DO OPENDISTUN
+            # ========================================================
+
+            wan_after_engine = get_public_ip_retry(
+                timeout=6,
+                attempts=4,
+                delay=0.8
+            )
+
+            if not wan_after_engine:
+                raise RuntimeError(
+                    "O OpenDisTun foi criado, mas a conexão normal "
+                    "do Windows não pôde ser confirmada."
+                )
+
+            if wan_after_engine != self.current_public_ip:
+                raise RuntimeError(
+                    "O App-VPN alterou a saída normal do computador.\n\n"
+                    f"IP antes: {self.current_public_ip}\n"
+                    f"IP agora: {wan_after_engine}"
+                )
+
+            self.after(
+                0,
+                lambda ip=wan_after_engine:
+                self.log(
+                    f"✅ WAN continua normal após OpenDisTun: {ip}"
+                )
+            )
+
+            # ========================================================
+            # 14. ABRIR DISCORD
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    70,
+                    "Abrindo Discord na VPN..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "💬 Iniciando Discord..."
+                )
+            )
+
+            discord_process = subprocess.Popen(
+                [str(discord)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    |
+                    subprocess.CREATE_NO_WINDOW
+                    if os.name == "nt"
+                    else 0
+                )
+            )
+
+            self.discord_process = (
+                discord_process
+            )
+
+            # Após o Discord assumir o foco, o OpenDis volta para a
+            # frente em 15 segundos. O tempo é independente da detecção
+            # de PID e usa a mesma janela curta pedida para estabilização.
+            self.after(
+                int(WAIT_OPENDIS_FOCUS * 1000),
+                self.focus_opendis_after_discord
+            )
+
+            self.after(
+                0,
+                lambda p=discord_process.pid:
+                self.log(
+                    f"💬 Processo inicial do Discord: PID {p}"
+                )
+            )
+
+            # ========================================================
+            # 15. AGUARDAR DISCORD
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
                     75,
-                    "Discord iniciado."
+                    "Detectando processos do Discord..."
+                )
+            )
+
+            discord_deadline = (
+                    time.time()
+                    +
+                    30
+            )
+
+            discord_pids = []
+
+            while time.time() < discord_deadline:
+
+                discord_pids = get_discord_pids()
+
+                if discord_pids:
+                    break
+
+                time.sleep(
+                    0.5
+                )
+
+            if not discord_pids:
+                raise RuntimeError(
+                    "Discord foi iniciado, mas nenhum "
+                    "Discord.exe foi encontrado."
+                )
+
+            self.after(
+                0,
+                lambda pids=discord_pids:
+                self.log(
+                    f"💬 Discord PIDs detectados: {pids}"
+                )
+            )
+
+            # ========================================================
+            # 16. ANEXAR DISCORD AO ENGINE
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    80,
+                    "Aplicando isolamento VPN..."
                 )
             )
 
             self.after(
                 0,
-                lambda: self.log(
-                    "✅ Discord aberto."
+                lambda:
+                self.log(
+                    "🛡️ Associando Discord à VPN..."
                 )
             )
 
-            # ====================================================
-            # 14. MANTER VPN / ESTABILIZAR DISCORD
-            # ====================================================
+            attach_method = getattr(
+                vpn_engine,
+                "attach_processes",
+                None
+            )
+
+            if not callable(
+                    attach_method
+            ):
+                raise RuntimeError(
+                    "O engine App-VPN não possui "
+                    "attach_processes()."
+                )
+
+            attach_result = attach_method(
+                pids=discord_pids
+            )
+
+            if attach_result is False:
+                raise RuntimeError(
+                    "O engine App-VPN recusou "
+                    "o isolamento do Discord."
+                )
 
             self.after(
                 0,
-                lambda: self.log(
+                lambda:
+                self.log(
+                    "🛡️ Discord associado à camada App-VPN."
+                )
+            )
+
+            # ========================================================
+            # 17. VERIFICAR ISOLAMENTO
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    85,
+                    "Verificando isolamento..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔍 Verificando isolamento do Discord..."
+                )
+            )
+
+            verify_method = getattr(
+                vpn_engine,
+                "verify",
+                None
+            )
+
+            if not callable(
+                    verify_method
+            ):
+                raise RuntimeError(
+                    "O engine App-VPN não possui "
+                    "verify()."
+                )
+
+            verified = verify_method(
+                pids=discord_pids
+            )
+
+            if verified is not True:
+                raise RuntimeError(
+                    "Não foi possível confirmar que "
+                    "o Discord está isolado na VPN."
+                )
+
+            # ========================================================
+            # 17.1 VERIFICAR CONEXÃO REAL DO DISCORD
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🌐 Aguardando conexão TCP real do Discord..."
+                )
+            )
+
+            connection_deadline = time.time() + 20
+            discord_connections = []
+
+            while time.time() < connection_deadline:
+
+                if self.operation_stop_event.is_set():
+                    raise RuntimeError(
+                        "Operação cancelada pelo usuário."
+                    )
+
+                if process.poll() is not None:
+                    raise RuntimeError(
+                        "A VPN caiu enquanto o Discord conectava."
+                    )
+
+                current_pids = get_discord_pids()
+
+                if current_pids:
+                    new_pids = [
+                        pid
+                        for pid in current_pids
+                        if pid not in discord_pids
+                    ]
+
+                    if new_pids:
+                        attach_method(
+                            pids=new_pids
+                        )
+                        discord_pids = current_pids
+
+                    discord_connections = (
+                        get_discord_established_connections(
+                            current_pids
+                        )
+                    )
+
+                    if discord_connections:
+                        break
+
+                time.sleep(0.5)
+
+            if not discord_connections:
+                try:
+                    engine_tail = SINGBOX_LOG_FILE.read_text(
+                        encoding="utf-8",
+                        errors="replace"
+                    )[-2500:]
+                except Exception:
+                    engine_tail = ""
+
+                raise RuntimeError(
+                    "O Discord foi iniciado, mas não conseguiu "
+                    "estabelecer conexão de rede pelo App-VPN.\n\n"
+                    "Último log do engine:\n"
+                    f"{engine_tail}"
+                )
+
+            first_connection = discord_connections[0]
+
+            self.after(
+                0,
+                lambda c=first_connection:
+                self.log(
+                    "✅ Discord estabeleceu conexão: "
+                    f"{c.get('RemoteAddress', '?')}:"
+                    f"{c.get('RemotePort', '?')}"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "========================================"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "✅ ISOLAMENTO CONFIRMADO"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "💬 Discord → VPN"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🌐 Demais aplicações → WAN normal"
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔒 VPN permanecerá conectada."
+                )
+            )
+
+            # ========================================================
+            # 18. ESTABILIZAÇÃO DISCORD
+            # ========================================================
+
+            self.after(
+                0,
+                lambda:
+                self.set_progress(
+                    90,
+                    "Discord conectado pela VPN..."
+                )
+            )
+
+            self.after(
+                0,
+                lambda:
+                self.log(
                     "⏳ Aguardando Discord estabilizar..."
                 )
             )
-
-            countdown_start = time.time()
 
             for remaining in range(
                     WAIT_DISCORD,
@@ -5685,50 +9504,96 @@ class OpenDisApp(ctk.CTk):
                     -1
             ):
 
-                elapsed = int(
-                    time.time() - countdown_start
-                )
-
-                # ------------------------------------------------
-                # TRAZER OPENDIS PARA FRENTE
-                # 40s / 20s / 0s restantes
-                # ------------------------------------------------
-
-                if remaining in {37, 29, 21, 14, 7, 4, 0}:
-                    self.after(
-                        0,
-                        self.bring_to_front
+                if self.operation_stop_event.is_set():
+                    raise RuntimeError(
+                        "Operação cancelada pelo usuário."
                     )
 
-                # ------------------------------------------------
+                # ----------------------------------------------------
+                # verificar OpenVPN
+                # ----------------------------------------------------
+
+                if process.poll() is not None:
+                    raise RuntimeError(
+                        "A VPN caiu durante a estabilização "
+                        "do Discord."
+                    )
+
+                # ----------------------------------------------------
+                # verificar Discord
+                # ----------------------------------------------------
+
+                current_pids = get_discord_pids()
+
+                if not current_pids:
+                    raise RuntimeError(
+                        "O Discord foi encerrado durante "
+                        "a estabilização."
+                    )
+
+                # ----------------------------------------------------
+                # proteger novos processos
+                # ----------------------------------------------------
+
+                if current_pids != discord_pids:
+
+                    new_pids = [
+                        pid
+                        for pid in current_pids
+                        if pid not in discord_pids
+                    ]
+
+                    if new_pids:
+                        self.after(
+                            0,
+                            lambda pids=new_pids:
+                            self.log(
+                                f"💬 Novos processos Discord: {pids}"
+                            )
+                        )
+
+                        attach_method(
+                            pids=new_pids
+                        )
+
+                        discord_pids = current_pids
+
+                # ----------------------------------------------------
                 # LOG
-                # ------------------------------------------------
+                # ----------------------------------------------------
 
                 self.after(
                     0,
                     lambda s=remaining:
                     self.log(
-                        f"⏳ Mantendo VPN por mais {s}s..."
+                        f"⏳ Discord/VPN estabilizando: "
+                        f"{s}s"
                     )
                 )
 
-                # ------------------------------------------------
+                # ----------------------------------------------------
                 # PROGRESSO
-                # ------------------------------------------------
+                # ----------------------------------------------------
 
                 elapsed = (
-                        WAIT_DISCORD - remaining
+                        WAIT_DISCORD
+                        -
+                        remaining
                 )
 
                 progress = (
-                        75
+                        90
                         +
                         (
                                 elapsed
                                 /
-                                WAIT_DISCORD
+                                max(
+                                    WAIT_DISCORD,
+                                    1
+                                )
                         )
-                        * 10
+                        *
+                        8
                 )
 
                 self.after(
@@ -5736,374 +9601,251 @@ class OpenDisApp(ctk.CTk):
                     lambda p=progress:
                     self.set_progress(
                         p,
-                        "Mantendo VPN..."
+                        "Discord conectado pela VPN..."
                     )
                 )
 
                 if remaining > 0:
                     time.sleep(1)
 
-            # ====================================================
-            # 14. DESCONECTAR VPN
-            # ====================================================
+            # ========================================================
+            # 19. ESTADO FINAL
+            # ========================================================
 
             self.after(
                 0,
-                lambda: self.set_progress(
-                    85,
-                    "Desconectando VPN..."
-                )
-            )
-
-            self.after(
-                0,
-                lambda: self.log(
-                    "🔓 Desconectando VPN..."
-                )
-            )
-
-            self.disconnect_vpn()
-
-            vpn_connected = False
-
-            # ====================================================
-            # 15. CONFIRMAR DESCONEXÃO
-            # ====================================================
-
-            self.after(
-                0,
-                lambda: self.log(
-                    "🔍 Confirmando desconexão..."
-                )
-            )
-
-            time.sleep(3)
-
-            if (
-                    self.vpn_process
-                    and
-                    self.vpn_process.poll() is None
-            ):
-                self.after(
-                    0,
-                    lambda: self.log(
-                        "⚠️ VPN ainda ativa. Forçando encerramento..."
-                    )
-                )
-
-                self.disconnect_vpn()
-
-            self.after(
-                0,
-                lambda: self.log(
-                    "✅ VPN desconectada."
-                )
-            )
-
-
-
-            # ====================================================
-            # TRAZER OPENDIS PARA FRENTE
-            # ====================================================
-
-            self.after(
-                0,
-                self.bring_to_front
-            )
-
-            time.sleep(
-                0.5
-            )
-
-            # ====================================================
-            # ESTABILIZAÇÃO DO DISCORD
-            # ====================================================
-
-            self.after(
-                0,
-                lambda: self.start_btn.configure(
-                    state="disabled",
-                    text="🔄 ESTABILIZANDO DISCORD..."
+                lambda:
+                self.log(
+                    "========================================"
                 )
             )
 
             self.after(
                 0,
-                lambda: self.log(
-                    "ℹ️ Seu Discord pode demorar um pouco para estabelecer a conexão novamente."
+                lambda:
+                self.log(
+                    "🎉 OPERAÇÃO CONCLUÍDA"
                 )
             )
 
             self.after(
                 0,
-                lambda: self.log(
-                    "⏳ Aguarde; se necessário, espere alguns instantes."
+                lambda:
+                self.log(
+                    "💬 Discord permanece aberto."
                 )
             )
 
-            # ====================================================
-            # TEMPO EXTRA
-            # ====================================================
-
-            for elapsed in range(
-                    DISCORD_STABILIZE_DELAY + 1
-            ):
-
-                remaining = (
-                        DISCORD_STABILIZE_DELAY
-                        -
-                        elapsed
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🔒 VPN permanece conectada."
                 )
+            )
 
-                progress = int(
-                    85
-                    +
-                    (
-                            elapsed
-                            /
-                            DISCORD_STABILIZE_DELAY
-                    )
-                    *
-                    15
+            self.after(
+                0,
+                lambda:
+                self.log(
+                    "🌐 O restante do computador permanece "
+                    "na conexão normal."
                 )
-
-                # ------------------------------------------------
-                # STATUS + PORCENTAGEM
-                # ------------------------------------------------
-
-                if remaining > 0:
-
-                    status = (
-                        f"Estabilizando a Conexão... {remaining}s"
-                    )
-
-                else:
-
-                    status = (
-                        "Discord estabilizado."
-                    )
-
-                self.after(
-                    0,
-                    lambda p=progress,
-                           s=status:
-                    self.set_progress(
-                        p,
-                        s
-                    )
-                )
-
-                # ------------------------------------------------
-                # LOG
-                # ------------------------------------------------
-
-                if remaining > 0:
-
-                    self.after(
-                        0,
-                        lambda r=remaining:
-                        self.log(
-                            f"⏳ Estabilizando a Conexão... {r}s"
-                        )
-                    )
-
-                else:
-
-                    self.after(
-                        0,
-                        lambda:
-                        self.log(
-                            "✅ Discord estabilizado."
-                        )
-                    )
-
-                    self.after(
-                        0,
-                        self.activity_bar.stop
-                    )
-
-                if remaining > 0:
-                    time.sleep(
-                        1
-                    )
-
-            # ====================================================
-            # FINAL
-            # ====================================================
+            )
 
             self.after(
                 0,
                 self.show_completed
             )
 
+            # ========================================================
+            # SUCESSO
+            # ========================================================
+
+            vpn_connected = True
+
+            # Não apagar o log em caso de sucesso.
+            # O fluxo existente pode alterar isso conforme
+            # a política de logs desejada.
+            keep_log_file = False
 
         except Exception as e:
 
-            # ====================================================
-
-            # ERRO → MANTER LOG PARA DIAGNÓSTICO
-
-            # ====================================================
+            error = str(e)
 
             keep_log_file = True
 
-            error_text = str(e)
-
             self.after(
-
                 0,
-
-                lambda msg=error_text:
-
+                lambda:
                 self.log(
-
-                    f"❌ {msg[:300]}"
-
+                    "========================================"
                 )
-
             )
 
-            # ====================================================
+            self.after(
+                0,
+                lambda msg=error:
+                self.log(
+                    f"❌ ERRO: {msg}"
+                )
+            )
 
-            # SEMPRE LIMPAR VPN
+            # ========================================================
+            # LIMPEZA ENGINE
+            # ========================================================
 
-            # ====================================================
+            try:
 
-            if (
+                vpn_engine = getattr(
+                    self,
+                    "vpn_engine",
+                    None
+                )
 
-                    vpn_connected
+                cleanup_method = getattr(
+                    vpn_engine,
+                    "cleanup",
+                    None
+                )
 
-                    or
+                if callable(
+                        cleanup_method
+                ):
+                    cleanup_method()
 
-                    getattr(
-
-                        self,
-
-                        "vpn_process",
-
-                        None
-
+                    self.after(
+                        0,
+                        lambda:
+                        self.log(
+                            "🧹 Engine App-VPN limpo."
+                        )
                     )
 
+            except Exception as cleanup_error:
+
+                self.after(
+                    0,
+                    lambda e=cleanup_error:
+                    self.log(
+                        f"⚠️ Erro limpando App-VPN: {e}"
+                    )
+                )
+
+            # ========================================================
+            # ERRO → DESCONECTAR VPN
+            # ========================================================
+
+            if (
+                process is not None
+                and
+                process.poll() is None
             ):
 
                 self.after(
-
                     0,
-
-                    lambda: self.log(
-
-                        "🛑 Limpando conexão VPN..."
-
+                    lambda:
+                    self.log(
+                        "🔓 Falha detectada. "
+                        "Desconectando VPN..."
                     )
-
                 )
 
                 try:
-
                     self.disconnect_vpn()
-
-
                 except Exception:
-
                     pass
 
+                vpn_connected = False
+
+            self.operation_active = False
+
+            # ========================================================
+            # MOSTRAR ERRO
+            # ========================================================
+
             self.after(
-
                 0,
-
-                lambda msg=error_text:
-
+                lambda msg=error:
                 mb.showerror(
-
                     "OpenDis",
-
-                    f"Ocorreu um erro:\n\n{msg[:1000]}"
-
+                    (
+                        "A operação não pôde ser concluída.\n\n"
+                        f"{msg[:2000]}"
+                    )
                 )
-
             )
 
             self.after(
-
                 0,
-
                 self.reset_start_button
-
             )
-
 
         finally:
 
-            # ====================================================
-
-            # FECHAR LOG
-
-            # ====================================================
+            # ========================================================
+            # FECHAR HANDLE DO LOG
+            # ========================================================
 
             try:
 
                 if log_handle:
                     log_handle.flush()
-
                     log_handle.close()
 
-
             except Exception:
-
                 pass
 
-            # ====================================================
-
-            # APAGAR LOG SE NÃO HOUVE ERRO
-
-            # ====================================================
-
-            if (
-
-                    not keep_log_file
-
-                    and
-
-                    self.vpn_log_file
-
-            ):
-
-                try:
-
-                    self.vpn_log_file.unlink(
-
-                        missing_ok=True
-
-                    )
-
-
-                except Exception:
-
-                    pass
-
-            # ====================================================
-
-            # APAGAR CREDENCIAL TEMPORÁRIA
-
-            # ====================================================
+            # ========================================================
+            # CREDENCIAL TEMPORÁRIA
+            # ========================================================
 
             if credentials_file:
 
                 try:
 
                     credentials_file.unlink(
-
                         missing_ok=True
-
                     )
 
-
                 except Exception:
-
                     pass
 
-                credentials_file = None
+            # ========================================================
+            # PERFIL OPENVPN TEMPORÁRIO
+            # ========================================================
+
+            if runtime_profile:
+
+                try:
+                    runtime_profile.unlink(
+                        missing_ok=True
+                    )
+                except Exception:
+                    pass
+
+            # ========================================================
+            # LIMPAR LOG SE NÃO FOR PARA MANTER
+            # ========================================================
+
+            if (
+                    not keep_log_file
+                    and
+                    getattr(
+                        self,
+                        "vpn_log_file",
+                        None
+                    )
+            ):
+
+                try:
+
+                    self.vpn_log_file.unlink(
+                        missing_ok=True
+                    )
+
+                except Exception:
+                    pass
 
 
     # ========================================================
@@ -6253,29 +9995,387 @@ class OpenDisApp(ctk.CTk):
     # FINAL
     # ========================================================
 
+    def focus_opendis_after_discord(self):
+        """
+        Traz o OpenDis de volta para a frente após o intervalo
+        configurado, sem encerrar ou alterar os processos de rede.
+        """
+
+        if self.shutdown_in_progress:
+            return
+
+        try:
+            self.deiconify()
+            self.lift()
+
+            # Pulso curto de topmost ajuda o Windows a devolver o foco
+            # depois que o Discord abriu e roubou a janela ativa.
+            self.attributes(
+                "-topmost",
+                True
+            )
+
+            if os.name == "nt":
+                try:
+                    hwnd = int(
+                        self.winfo_id()
+                    )
+
+                    # SW_RESTORE = 9
+                    ctypes.windll.user32.ShowWindow(
+                        hwnd,
+                        9
+                    )
+                    ctypes.windll.user32.SetForegroundWindow(
+                        hwnd
+                    )
+                except Exception:
+                    pass
+
+            self.focus_force()
+
+            self.after(
+                250,
+                lambda:
+                self.attributes(
+                    "-topmost",
+                    False
+                )
+            )
+
+        except Exception:
+            pass
+
+
     def show_completed(self):
+        """
+        Estado final ativo.
+
+        A operação NÃO é encerrada aqui. O OpenDis permanece vivo,
+        é minimizado e mantém OpenVPN + App-VPN ativos. Para voltar ao
+        estado normal existe o botão FECHAR E ENCERRAR VPN.
+        """
+
+        self.operation_active = True
+
+        try:
+            self.activity_bar.stop()
+        except Exception:
+            pass
 
         self.set_progress(
             100,
-            "Discord estabilizado. Tudo pronto!"
+            "Discord conectado pela VPN."
         )
 
         self.log(
             "🎉 Operação concluída com sucesso!"
         )
+        self.log(
+            "🔒 Discord permanece na VPN."
+        )
+        self.log(
+            "🌐 Demais aplicações permanecem na conexão normal."
+        )
+        self.log(
+            "🪟 OpenDis será minimizado."
+        )
+        self.log(
+            "⛔ Restaure a janela e use FECHAR E ENCERRAR VPN "
+            "para desfazer toda a operação."
+        )
 
         self.final_status.configure(
-            text="✅ Discord Aberto!",
+            text="✅ CONCLUÍDO — Discord na VPN",
             text_color="#57F287"
         )
 
         self.start_btn.configure(
-            state="normal",
-            text="✓ CONCLUIR E FECHAR",
+            state="disabled",
+            text="✓ CONCLUÍDO",
             fg_color="#3ba55d",
-            hover_color="#2d7d46",
-            command=self.destroy
+            hover_color="#3ba55d"
         )
+
+        try:
+            if self.stop_vpn_btn:
+                self.stop_vpn_btn.pack(
+                    pady=(2, 5)
+                )
+        except Exception:
+            pass
+
+        self.after(
+            1400,
+            self.minimize_completed
+        )
+
+    def minimize_completed(self):
+        """
+        Minimiza a janela sem encerrar os processos de rede.
+        """
+
+        if (
+            self.operation_active
+            and
+            not self.shutdown_in_progress
+        ):
+            try:
+                self.iconify()
+            except Exception:
+                pass
+
+    def on_window_close(self):
+        """
+        O X nunca deve abandonar uma VPN ativa sem limpeza.
+        """
+
+        if self.shutdown_in_progress:
+            return
+
+        engine_running = bool(
+            getattr(
+                self.vpn_engine,
+                "running",
+                False
+            )
+        )
+
+        vpn_running = bool(
+            self.vpn_process
+            and
+            self.vpn_process.poll() is None
+        )
+
+        if (
+            self.operation_active
+            or
+            engine_running
+            or
+            vpn_running
+        ):
+            answer = mb.askyesno(
+                "Encerrar OpenDis",
+                (
+                    "A VPN do Discord ainda está ativa.\n\n"
+                    "Deseja fechar o OpenDis e encerrar a VPN, "
+                    "removendo o OpenDisTun e voltando à conexão normal?"
+                )
+            )
+
+            if answer:
+                self.request_shutdown_and_exit()
+
+            return
+
+        self.stop_vpn_ping_monitor()
+        self.destroy()
+
+    def request_shutdown_and_exit(self):
+        """
+        Inicia a reversão completa sem bloquear a interface gráfica.
+        """
+
+        if self.shutdown_in_progress:
+            return
+
+        self.shutdown_in_progress = True
+        self.operation_stop_event.set()
+
+        try:
+            self.deiconify()
+            self.lift()
+        except Exception:
+            pass
+
+        try:
+            if self.stop_vpn_btn:
+                self.stop_vpn_btn.configure(
+                    state="disabled",
+                    text="🔄 ENCERRANDO VPN..."
+                )
+        except Exception:
+            pass
+
+        try:
+            self.start_btn.configure(
+                state="disabled"
+            )
+        except Exception:
+            pass
+
+        try:
+            self.final_status.configure(
+                text="🔄 Restaurando conexão normal...",
+                text_color="#cccccc"
+            )
+        except Exception:
+            pass
+
+        try:
+            self.log(
+                "========================================"
+            )
+            self.log(
+                "⛔ Encerrando App-VPN e restaurando a rede..."
+            )
+        except Exception:
+            pass
+
+        threading.Thread(
+            target=self._shutdown_and_exit_worker,
+            daemon=True
+        ).start()
+
+    def _shutdown_and_exit_worker(self):
+        """
+        Ordem de reversão:
+            1. encerra sing-box / OpenDisTun;
+            2. encerra OpenVPN;
+            3. limpa DNS;
+            4. confirma retorno da WAN, quando possível;
+            5. fecha o OpenDis.
+        """
+
+        errors = []
+
+        try:
+            engine_ok = self.vpn_engine.cleanup()
+
+            # cleanup() pode retornar False quando algum detalhe do
+            # processo demora a confirmar, mesmo depois de o Wintun já
+            # ter sido realmente derrubado. Só tratar como falha de TUN
+            # quando a interface OpenDisTun ainda estiver ATIVA. Se o
+            # Windows apenas mantiver o dispositivo listado como Down,
+            # o teardown já foi concluído e não mostramos falso positivo.
+            if (
+                not engine_ok
+                and
+                is_windows_adapter_active("OpenDisTun")
+            ):
+                errors.append(
+                    "O App-VPN foi encerrado, mas o OpenDisTun ainda "
+                    "permanece ativo no Windows."
+                )
+
+        except Exception as e:
+            errors.append(
+                f"Falha ao encerrar App-VPN: {e}"
+            )
+
+        try:
+            vpn_ok = self.disconnect_vpn()
+
+            if not vpn_ok:
+                errors.append(
+                    "O processo OpenVPN não confirmou encerramento."
+                )
+
+        except Exception as e:
+            errors.append(
+                f"Falha ao encerrar OpenVPN: {e}"
+            )
+
+        flush_windows_dns_cache()
+        time.sleep(1.0)
+
+        restored_ip = get_public_ip_retry(
+            timeout=6,
+            attempts=3,
+            delay=0.8
+        )
+
+        if (
+            restored_ip
+            and
+            self.current_public_ip
+            and
+            restored_ip != self.current_public_ip
+        ):
+            errors.append(
+                "A VPN foi encerrada, mas o IP público ainda não "
+                "voltou ao valor observado antes da operação."
+            )
+
+        self.operation_active = False
+
+        self.after(
+            0,
+            lambda errs=errors,
+                   ip=restored_ip:
+            self._finish_shutdown_and_exit(
+                errs,
+                ip
+            )
+        )
+
+    def _finish_shutdown_and_exit(
+        self,
+        errors,
+        restored_ip
+    ):
+        """
+        Finaliza a UI somente depois da limpeza de rede.
+        """
+
+        if restored_ip:
+            try:
+                self.log(
+                    f"🌐 IP após encerramento: {restored_ip}"
+                )
+            except Exception:
+                pass
+
+        if errors:
+            self.shutdown_in_progress = False
+
+            try:
+                self.final_status.configure(
+                    text="⚠️ Verifique a restauração da rede",
+                    text_color="#FFA500"
+                )
+            except Exception:
+                pass
+
+            try:
+                if self.stop_vpn_btn:
+                    self.stop_vpn_btn.configure(
+                        state="normal",
+                        text="⛔ TENTAR ENCERRAR NOVAMENTE"
+                    )
+            except Exception:
+                pass
+
+            mb.showwarning(
+                "OpenDis",
+                (
+                    "A limpeza foi executada, mas uma verificação "
+                    "não ficou 100% confirmada:\n\n"
+                    +
+                    "\n".join(
+                        f"• {item}"
+                        for item in errors
+                    )
+                )[:2500]
+            )
+
+            return
+
+        try:
+            self.log(
+                "✅ OpenDisTun removido."
+            )
+            self.log(
+                "✅ OpenVPN encerrado."
+            )
+            self.log(
+                "✅ Conexão normal restaurada."
+            )
+        except Exception:
+            pass
+
+        self.destroy()
+
 
 
     # ========================================================

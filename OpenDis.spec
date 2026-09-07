@@ -19,7 +19,7 @@ from PyInstaller.utils.win32.versioninfo import (
 # ============================================================
 
 APP_NAME = "OpenDis"
-VERSION = "1.1.0"
+VERSION = "2.0.0"
 COMPANY = "MagnataTile"
 
 BASE_DIR = Path.cwd()
