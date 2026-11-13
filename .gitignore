@@ -1,0 +1,29 @@
+# Chaves de assinatura (NUNCA commitar)
+keys/
+**/keys/
+*.jks
+*.keystore
+
+# Logs e dados locais
+Logs/
+VPN/
+
+# Build
+build/
+**/build/
+dist/Logs/
+dist/VPN/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+**/.idea/
+.vscode/
+*.iml
+local.properties
+.gradle/
+
+# Arquivos soltos
+img.jpg
+infotag.png
